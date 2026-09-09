@@ -2,7 +2,7 @@
 
 <!-- markdownlint-disable -->
 # screenshot <a href="https://cpco.io/homepage?utm_source=github&utm_medium=readme&utm_campaign=step-security/cloudposse-github-actions-screenshot&utm_content="><img align="right" src="https://cloudposse.com/logo-300x69.svg" width="150" /></a>
-<a href="https://github.com/step-security/cloudposse-github-actions-screenshot/releases/latest"><img src="https://img.shields.io/github/release/step-security/cloudposse-github-actions-screenshot.svg" alt="Latest Release"/></a><a href="https://slack.cloudposse.com"><img src="https://slack.cloudposse.com/badge.svg" alt="Slack Community"/></a>
+<a href="https://github.com/step-security/cloudposse-github-actions-screenshot/releases/latest"><img src="https://img.shields.io/github/release/step-security/cloudposse-github-actions-screenshot.svg" alt="Latest Release"/></a><a href="https://slack.cloudposse.com"></a>
 <!-- markdownlint-restore -->
 
 
