@@ -1,0 +1,7 @@
+[[IgnoredVulns]]
+id = "GHSA-7pqw-9j4j-h8q3"
+reason = "extract-zip is a transitive dependency of puppeteer/@puppeteer/browsers used only to extract the Chromium binary at install time. At runtime the action uses the pre-installed Chrome from the puppeteer Docker image so this code path is never exercised. No fix available."
+
+[[IgnoredVulns]]
+id = "GHSA-jmr9-qjv8-65gv"
+reason = "extract-zip is a transitive dependency of puppeteer/@puppeteer/browsers used only to extract the Chromium binary at install time. At runtime the action uses the pre-installed Chrome from the puppeteer Docker image so this code path is never exercised. No fix available."
