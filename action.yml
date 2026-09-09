@@ -104,24 +104,29 @@ runs:
 
     - name: Setup environment
       shell: bash
+      env:
+        INPUT_CSS: ${{ inputs.css }}
+        INPUT_CUSTOMIZATIONS: ${{ inputs.customizations }}
+        INPUT_OUTPUT: ${{ inputs.output }}
       run: |
         # Ensure node_modules folder will have correct permissions
         mkdir -p '${{ github.action_path }}/node_modules'
 
+        # Validate output path to prevent directory traversal
+        if [[ "$INPUT_OUTPUT" == *".."* ]]; then
+          echo "::error::Invalid output path: path traversal sequences are not allowed"
+          exit 1
+        fi
+
         # Ensure parent directory containing output file exists
-        mkdir -p $(dirname '${{ github.workspace }}/${{ inputs.output }}')
+        mkdir -p "$(dirname "${{ github.workspace }}/$INPUT_OUTPUT")"
 
         # Ensure docker container can write this workspace as an unprivileged user
         chmod ugoa+rw -R '${{ github.workspace }}' '${{ github.action_path }}'
 
-        # Write out customizations
-        cat <<'__EOF__' | tee -i '${{ github.action_path }}/custom.css'
-        ${{ inputs.css }}
-        __EOF__
-
-        cat <<'__EOF__' | tee -i ${{ github.action_path }}/custom.yaml
-        ${{ inputs.customizations }}
-        __EOF__
+        # Write out customizations via env vars to avoid heredoc injection
+        printf '%s' "$INPUT_CSS" > '${{ github.action_path }}/custom.css'
+        printf '%s' "$INPUT_CUSTOMIZATIONS" > '${{ github.action_path }}/custom.yaml'
 
         # Prepare inputs that should be passed to the docker container.
         cat <<'__EOF__' >docker.env
@@ -130,7 +135,7 @@ runs:
         ACTION_PATH=${{ github.action_path }}
         INPUT_OUTPUT_TYPE=${{ inputs.outputType }}
         INPUT_URL=${{ inputs.url }}
-        INPUT_OUTPUT=${{ github.workspace }}/${{ inputs.output }}
+        INPUT_OUTPUT=${{ github.workspace }}/$INPUT_OUTPUT
         INPUT_OUTPUT_TYPE=${{ inputs.outputType }}
         INPUT_OMIT_BACKGROUND=${{ inputs.omitBackground }}
         INPUT_VIEWPORT_WIDTH=${{ inputs.viewportWidth }}
@@ -163,6 +168,8 @@ runs:
 
     - id: context
       shell: bash
+      env:
+        INPUT_OUTPUT: ${{ inputs.output }}
       run: |
-          printf 'file=%s\n' '${{ inputs.output }}' >> $GITHUB_OUTPUT
+          printf 'file=%s\n' "$INPUT_OUTPUT" >> $GITHUB_OUTPUT
 
