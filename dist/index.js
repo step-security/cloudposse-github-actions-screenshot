@@ -11878,7 +11878,6 @@ const cdpToBidiTargetTypes = {
 class CdpTargetManager {
     #browserCdpClient;
     #cdpConnection;
-    #targetKeysToBeIgnoredByAutoAttach = new Set();
     #selfTargetId;
     #eventManager;
     #browsingContextStorage;
@@ -11891,7 +11890,6 @@ class CdpTargetManager {
     constructor(cdpConnection, browserCdpClient, selfTargetId, eventManager, browsingContextStorage, realmStorage, networkStorage, preloadScriptStorage, defaultUserContextId, unhandledPromptBehavior, logger) {
         this.#cdpConnection = cdpConnection;
         this.#browserCdpClient = browserCdpClient;
-        this.#targetKeysToBeIgnoredByAutoAttach.add(selfTargetId);
         this.#selfTargetId = selfTargetId;
         this.#eventManager = eventManager;
         this.#browsingContextStorage = browsingContextStorage;
@@ -11938,41 +11936,15 @@ class CdpTargetManager {
     #handleAttachedToTargetEvent(params, parentSessionCdpClient) {
         const { sessionId, targetInfo } = params;
         const targetCdpClient = this.#cdpConnection.getCdpClient(sessionId);
-        const detach = async () => {
-            // Detaches and resumes the target suppressing errors.
-            await targetCdpClient
-                .sendCommand('Runtime.runIfWaitingForDebugger')
-                .then(() => parentSessionCdpClient.sendCommand('Target.detachFromTarget', params))
-                .catch((error) => this.#logger?.(log_js_1.LogType.debugError, error));
-        };
-        if (this.#selfTargetId !== targetInfo.targetId) {
-            // Service workers are special case because they attach to the
-            // browser target and the page target (so twice per worker) during
-            // the regular auto-attach and might hang if the CDP session on
-            // the browser level is not detached. The logic to detach the
-            // right session is handled in the switch below.
-            const targetKey = targetInfo.type === 'service_worker'
-                ? `${parentSessionCdpClient.sessionId}_${targetInfo.targetId}`
-                : targetInfo.targetId;
-            // Mapper generally only needs one session per target. If we
-            // receive additional auto-attached sessions, that is very likely
-            // coming from custom CDP sessions.
-            if (this.#targetKeysToBeIgnoredByAutoAttach.has(targetKey)) {
-                // Return to leave the session untouched.
-                return;
-            }
-            this.#targetKeysToBeIgnoredByAutoAttach.add(targetKey);
-        }
         switch (targetInfo.type) {
             case 'page':
             case 'iframe': {
-                if (this.#selfTargetId === targetInfo.targetId) {
-                    void detach();
-                    return;
+                if (targetInfo.targetId === this.#selfTargetId) {
+                    break;
                 }
                 const cdpTarget = this.#createCdpTarget(targetCdpClient, targetInfo);
                 const maybeContext = this.#browsingContextStorage.findContext(targetInfo.targetId);
-                if (maybeContext && targetInfo.type === 'iframe') {
+                if (maybeContext) {
                     // OOPiF.
                     maybeContext.updateCdpTarget(cdpTarget);
                 }
@@ -12002,8 +11974,7 @@ class CdpTargetManager {
                 });
                 // If there is no browsing context, this worker is already terminated.
                 if (!realm) {
-                    void detach();
-                    return;
+                    break;
                 }
                 const cdpTarget = this.#createCdpTarget(targetCdpClient, targetInfo);
                 this.#handleWorkerTarget(cdpToBidiTargetTypes[targetInfo.type], cdpTarget, realm);
@@ -12021,7 +11992,10 @@ class CdpTargetManager {
         }
         // DevTools or some other not supported by BiDi target. Just release
         // debugger and ignore them.
-        void detach();
+        targetCdpClient
+            .sendCommand('Runtime.runIfWaitingForDebugger')
+            .then(() => parentSessionCdpClient.sendCommand('Target.detachFromTarget', params))
+            .catch((error) => this.#logger?.(log_js_1.LogType.debugError, error));
     }
     #createCdpTarget(targetCdpClient, targetInfo) {
         this.#setEventListeners(targetCdpClient);
@@ -12594,7 +12568,6 @@ class BrowsingContextImpl {
                     defaultPromptHandler);
             case "beforeunload" /* BrowsingContext.UserPromptType.Beforeunload */:
                 return (this.#unhandledPromptBehavior?.beforeUnload ??
-                    this.#unhandledPromptBehavior?.default ??
                     "accept" /* Session.UserPromptHandlerType.Accept */);
             case "confirm" /* BrowsingContext.UserPromptType.Confirm */:
                 return (this.#unhandledPromptBehavior?.confirm ??
@@ -16075,6 +16048,8 @@ class NetworkProcessor {
         const request = this.#getBlockedRequestOrFail(params.request, [
             "beforeRequestSent" /* Network.InterceptPhase.BeforeRequestSent */,
         ]);
+        // TODO: Set / expand.
+        // ; Step 9. cookies
         try {
             await request.continueRequest(params);
         }
@@ -16091,6 +16066,8 @@ class NetworkProcessor {
             "authRequired" /* Network.InterceptPhase.AuthRequired */,
             "responseStarted" /* Network.InterceptPhase.ResponseStarted */,
         ]);
+        // TODO: Set / expand.
+        // ; Step 10. cookies
         try {
             await request.continueResponse(params);
         }
@@ -16122,6 +16099,8 @@ class NetworkProcessor {
         if (params.headers) {
             NetworkProcessor.validateHeaders(params.headers);
         }
+        // TODO: Set / expand.
+        // ; Step 10. cookies
         const request = this.#getBlockedRequestOrFail(params.request, [
             "beforeRequestSent" /* Network.InterceptPhase.BeforeRequestSent */,
             "responseStarted" /* Network.InterceptPhase.ResponseStarted */,
@@ -16415,7 +16394,7 @@ class NetworkRequest {
     isRedirecting() {
         return Boolean(this.#request.info);
     }
-    #isDataUrl() {
+    isDataUrl() {
         return this.url.startsWith('data:');
     }
     get #method() {
@@ -16507,25 +16486,22 @@ class NetworkRequest {
         }
         return authChallenges;
     }
+    // TODO: implement.
     get #timings() {
         return {
-            // TODO: Verify this is correct
-            timeOrigin: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.requestTime),
-            requestTime: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.requestTime),
+            timeOrigin: 0,
+            requestTime: 0,
             redirectStart: 0,
             redirectEnd: 0,
-            // TODO: Verify this is correct
-            // https://source.chromium.org/chromium/chromium/src/+/main:net/base/load_timing_info.h;l=145
-            fetchStart: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.requestTime),
-            dnsStart: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.dnsStart),
-            dnsEnd: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.dnsEnd),
-            connectStart: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.connectStart),
-            connectEnd: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.connectEnd),
-            tlsStart: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.sslStart),
-            requestStart: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.sendStart),
-            // https://source.chromium.org/chromium/chromium/src/+/main:net/base/load_timing_info.h;l=196
-            responseStart: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.receiveHeadersStart),
-            responseEnd: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.receiveHeadersEnd),
+            fetchStart: 0,
+            dnsStart: 0,
+            dnsEnd: 0,
+            connectStart: 0,
+            connectEnd: 0,
+            tlsStart: 0,
+            requestStart: 0,
+            responseStart: 0,
+            responseEnd: 0,
         };
     }
     #phaseChanged() {
@@ -16555,7 +16531,7 @@ class NetworkRequest {
         // Flush redirects
         options.wasRedirected ||
             options.hasFailed ||
-            this.#isDataUrl() ||
+            this.isDataUrl() ||
             Boolean(this.#request.extraInfo) ||
             // Requests from cache don't have extra info
             this.#servedFromCache ||
@@ -16564,7 +16540,7 @@ class NetworkRequest {
             Boolean(this.#response.info && !this.#response.hasExtraInfo);
         const noInterceptionExpected = 
         // We can't intercept data urls from CDP
-        this.#isDataUrl() ||
+        this.isDataUrl() ||
             // Cached requests never hit the network
             this.#servedFromCache;
         const requestInterceptionExpected = !noInterceptionExpected &&
@@ -16706,8 +16682,7 @@ class NetworkRequest {
     }
     /** @see https://chromedevtools.github.io/devtools-protocol/tot/Fetch/#method-continueRequest */
     async continueRequest(overrides = {}) {
-        const overrideHeaders = this.#getOverrideHeader(overrides.headers, overrides.cookies);
-        const headers = (0, NetworkUtils_js_1.cdpFetchHeadersFromBidiNetworkHeaders)(overrideHeaders);
+        const headers = (0, NetworkUtils_js_1.cdpFetchHeadersFromBidiNetworkHeaders)(overrides.headers);
         const postData = getCdpBodyFromBiDiBytesValue(overrides.body);
         await this.#continueRequest({
             url: overrides.url,
@@ -16719,7 +16694,6 @@ class NetworkRequest {
             url: overrides.url,
             method: overrides.method,
             headers: overrides.headers,
-            cookies: overrides.cookies,
             bodySize: getSizeFromBiDiBytesValue(overrides.body),
         };
     }
@@ -16756,8 +16730,7 @@ class NetworkRequest {
             }
         }
         if (this.#interceptPhase === "responseStarted" /* Network.InterceptPhase.ResponseStarted */) {
-            const overrideHeaders = this.#getOverrideHeader(overrides.headers, overrides.cookies);
-            const responseHeaders = (0, NetworkUtils_js_1.cdpFetchHeadersFromBidiNetworkHeaders)(overrideHeaders);
+            const responseHeaders = (0, NetworkUtils_js_1.cdpFetchHeadersFromBidiNetworkHeaders)(overrides.headers);
             await this.#continueResponse({
                 responseCode: overrides.statusCode,
                 responsePhrase: overrides.reasonPhrase,
@@ -16808,8 +16781,9 @@ class NetworkRequest {
         if (!overrides.body && !overrides.headers) {
             return await this.#continueRequest();
         }
-        const overrideHeaders = this.#getOverrideHeader(overrides.headers, overrides.cookies);
-        const responseHeaders = (0, NetworkUtils_js_1.cdpFetchHeadersFromBidiNetworkHeaders)(overrideHeaders);
+        // TODO: Step 6
+        // https://w3c.github.io/webdriver-bidi/#command-network-continueResponse
+        const responseHeaders = (0, NetworkUtils_js_1.cdpFetchHeadersFromBidiNetworkHeaders)(overrides.headers);
         const responseCode = overrides.statusCode ?? this.#statusCode ?? 200;
         await this.cdpClient.sendCommand('Fetch.fulfillRequest', {
             requestId: this.#fetchId,
@@ -16866,7 +16840,7 @@ class NetworkRequest {
             redirectCount: this.#redirectCount,
             request: this.#getRequestData(),
             // Timestamp should be in milliseconds, while CDP provides it in seconds.
-            timestamp: Math.round((0, NetworkUtils_js_1.getTiming)(this.#request.info?.wallTime) * 1000),
+            timestamp: Math.round((this.#request.info?.wallTime ?? 0) * 1000),
             // Contains isBlocked and intercepts
             ...interceptProps,
         };
@@ -16968,23 +16942,6 @@ class NetworkRequest {
         return (this.#request.paused?.request.url.endsWith(faviconUrl) ??
             this.#request.info?.request.url.endsWith(faviconUrl) ??
             false);
-    }
-    #getOverrideHeader(headers, cookies) {
-        if (!headers && !cookies) {
-            return undefined;
-        }
-        let overrideHeaders = headers;
-        const cookieHeader = (0, NetworkUtils_js_1.networkHeaderFromCookieHeaders)(cookies);
-        if (cookieHeader && !overrideHeaders) {
-            overrideHeaders = this.#requestHeaders;
-        }
-        if (cookieHeader && overrideHeaders) {
-            overrideHeaders.filter((header) => header.name.localeCompare('cookie', undefined, {
-                sensitivity: 'base',
-            }) !== 0);
-            overrideHeaders.push(cookieHeader);
-        }
-        return overrideHeaders;
     }
     static #getInitiatorType(initiatorType) {
         switch (initiatorType) {
@@ -17267,7 +17224,6 @@ exports.bidiNetworkHeadersFromCdpNetworkHeadersEntries = bidiNetworkHeadersFromC
 exports.cdpNetworkHeadersFromBidiNetworkHeaders = cdpNetworkHeadersFromBidiNetworkHeaders;
 exports.bidiNetworkHeadersFromCdpFetchHeaders = bidiNetworkHeadersFromCdpFetchHeaders;
 exports.cdpFetchHeadersFromBidiNetworkHeaders = cdpFetchHeadersFromBidiNetworkHeaders;
-exports.networkHeaderFromCookieHeaders = networkHeaderFromCookieHeaders;
 exports.cdpAuthChallengeResponseFromBidiAuthContinueWithAuthAction = cdpAuthChallengeResponseFromBidiAuthContinueWithAuthAction;
 exports.cdpToBiDiCookie = cdpToBiDiCookie;
 exports.deserializeByteValue = deserializeByteValue;
@@ -17276,7 +17232,6 @@ exports.sameSiteBiDiToCdp = sameSiteBiDiToCdp;
 exports.isSpecialScheme = isSpecialScheme;
 exports.matchUrlPattern = matchUrlPattern;
 exports.bidiBodySizeFromCdpPostDataEntries = bidiBodySizeFromCdpPostDataEntries;
-exports.getTiming = getTiming;
 const ErrorResponse_js_1 = __nccwpck_require__(52772);
 const Base64_js_1 = __nccwpck_require__(52163);
 const UrlPattern_js_1 = __nccwpck_require__(49201);
@@ -17345,28 +17300,6 @@ function cdpFetchHeadersFromBidiNetworkHeaders(headers) {
         name,
         value: value.value,
     }));
-}
-function networkHeaderFromCookieHeaders(headers) {
-    if (headers === undefined) {
-        return undefined;
-    }
-    const value = headers.reduce((acc, value, index) => {
-        if (index > 0) {
-            acc += ';';
-        }
-        const cookieValue = value.value.type === 'base64'
-            ? btoa(value.value.value)
-            : value.value.value;
-        acc += `${value.name}=${cookieValue}`;
-        return acc;
-    }, '');
-    return {
-        name: 'Cookie',
-        value: {
-            type: 'string',
-            value,
-        },
-    };
 }
 /** Converts from Bidi auth action to CDP auth challenge response. */
 function cdpAuthChallengeResponseFromBidiAuthContinueWithAuthAction(action) {
@@ -17528,15 +17461,6 @@ function bidiBodySizeFromCdpPostDataEntries(entries) {
         size += atob(entry.bytes ?? '').length;
     }
     return size;
-}
-function getTiming(timing) {
-    if (!timing) {
-        return 0;
-    }
-    if (timing < 0) {
-        return 0;
-    }
-    return timing;
 }
 //# sourceMappingURL=NetworkUtils.js.map
 
@@ -260277,10 +260201,8 @@ class CLI {
     }
     #build(yargs) {
         const latestOrPinned = this.#pinnedBrowsers ? 'pinned' : 'latest';
-        // If there are pinned browsers allow the positional arg to be optional
-        const browserArgType = this.#pinnedBrowsers ? '[browser]' : '<browser>';
         return yargs
-            .command(`install ${browserArgType}`, 'Download and install the specified browser. If successful, the command outputs the actual browser buildId that was installed and the absolute path to the browser executable (format: <browser>@<buildID> <path>).', yargs => {
+            .command('install <browser>', 'Download and install the specified browser. If successful, the command outputs the actual browser buildId that was installed and the absolute path to the browser executable (format: <browser>@<buildID> <path>).', yargs => {
             this.#defineBrowserParameter(yargs);
             this.#definePlatformParameter(yargs);
             this.#definePathParameter(yargs);
@@ -260288,9 +260210,6 @@ class CLI {
                 type: 'string',
                 desc: 'Base URL to download from',
             });
-            if (this.#pinnedBrowsers) {
-                yargs.example('$0 install', 'Install all pinned browsers');
-            }
             yargs.example('$0 install chrome', `Install the ${latestOrPinned} available build of the Chrome browser.`);
             yargs.example('$0 install chrome@latest', 'Install the latest available build for the Chrome browser.');
             yargs.example('$0 install chrome@stable', 'Install the latest available build for the Chrome browser from the stable channel.');
@@ -260318,31 +260237,36 @@ class CLI {
             }
         }, async (argv) => {
             const args = argv;
-            if (this.#pinnedBrowsers && !args.browser) {
-                // Use allSettled to avoid scenarios that
-                // a browser may fail early and leave the other
-                // installation in a faulty state
-                const result = await Promise.allSettled(Object.entries(this.#pinnedBrowsers).map(async ([browser, options]) => {
-                    if (options.skipDownload) {
-                        return;
-                    }
-                    await this.#install({
-                        ...argv,
-                        browser: {
-                            name: browser,
-                            buildId: options.buildId,
-                        },
-                    });
-                }));
-                for (const install of result) {
-                    if (install.status === 'rejected') {
-                        throw install.reason;
-                    }
+            args.platform ??= (0, detectPlatform_js_1.detectBrowserPlatform)();
+            if (!args.platform) {
+                throw new Error(`Could not resolve the current platform`);
+            }
+            if (args.browser.buildId === 'pinned') {
+                const pinnedVersion = this.#pinnedBrowsers?.[args.browser.name];
+                if (!pinnedVersion) {
+                    throw new Error(`No pinned version found for ${args.browser.name}`);
                 }
+                args.browser.buildId = pinnedVersion;
             }
-            else {
-                await this.#install(args);
-            }
+            const originalBuildId = args.browser.buildId;
+            args.browser.buildId = await (0, browser_data_js_1.resolveBuildId)(args.browser.name, args.platform, args.browser.buildId);
+            await (0, install_js_1.install)({
+                browser: args.browser.name,
+                buildId: args.browser.buildId,
+                platform: args.platform,
+                cacheDir: args.path ?? this.#cachePath,
+                downloadProgressCallback: makeProgressCallback(args.browser.name, args.browser.buildId),
+                baseUrl: args.baseUrl,
+                buildIdAlias: originalBuildId !== args.browser.buildId
+                    ? originalBuildId
+                    : undefined,
+            });
+            console.log(`${args.browser.name}@${args.browser.buildId} ${(0, launch_js_1.computeExecutablePath)({
+                browser: args.browser.name,
+                buildId: args.browser.buildId,
+                cacheDir: args.path ?? this.#cachePath,
+                platform: args.platform,
+            })}`);
         })
             .command('launch <browser>', 'Launch the specified browser', yargs => {
             this.#defineBrowserParameter(yargs);
@@ -260414,39 +260338,6 @@ class CLI {
             : this.#pinnedBrowsers
                 ? 'pinned'
                 : 'latest';
-    }
-    async #install(args) {
-        args.platform ??= (0, detectPlatform_js_1.detectBrowserPlatform)();
-        if (!args.browser) {
-            throw new Error(`No browser arg proveded`);
-        }
-        if (!args.platform) {
-            throw new Error(`Could not resolve the current platform`);
-        }
-        if (args.browser.buildId === 'pinned') {
-            const options = this.#pinnedBrowsers?.[args.browser.name];
-            if (!options || !options.buildId) {
-                throw new Error(`No pinned version found for ${args.browser.name}`);
-            }
-            args.browser.buildId = options.buildId;
-        }
-        const originalBuildId = args.browser.buildId;
-        args.browser.buildId = await (0, browser_data_js_1.resolveBuildId)(args.browser.name, args.platform, args.browser.buildId);
-        await (0, install_js_1.install)({
-            browser: args.browser.name,
-            buildId: args.browser.buildId,
-            platform: args.platform,
-            cacheDir: args.path ?? this.#cachePath,
-            downloadProgressCallback: makeProgressCallback(args.browser.name, args.browser.buildId),
-            baseUrl: args.baseUrl,
-            buildIdAlias: originalBuildId !== args.browser.buildId ? originalBuildId : undefined,
-        });
-        console.log(`${args.browser.name}@${args.browser.buildId} ${(0, launch_js_1.computeExecutablePath)({
-            browser: args.browser.name,
-            buildId: args.browser.buildId,
-            cacheDir: args.path ?? this.#cachePath,
-            platform: args.platform,
-        })}`);
     }
 }
 exports.CLI = CLI;
@@ -262080,7 +261971,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.canDownload = exports.getInstalledBrowsers = exports.uninstall = exports.install = void 0;
 const assert_1 = __importDefault(__nccwpck_require__(42613));
-const child_process_1 = __nccwpck_require__(35317);
 const fs_1 = __nccwpck_require__(79896);
 const promises_1 = __nccwpck_require__(91943);
 const os_1 = __importDefault(__nccwpck_require__(70857));
@@ -262190,7 +262080,6 @@ async function installUrl(url, options) {
             if (!(0, fs_1.existsSync)(installedBrowser.executablePath)) {
                 throw new Error(`The browser folder (${outputPath}) exists but the executable (${installedBrowser.executablePath}) is missing`);
             }
-            await runSetup(installedBrowser);
             return installedBrowser;
         }
         debugInstall(`Downloading binary from ${url}`);
@@ -262215,36 +262104,11 @@ async function installUrl(url, options) {
             metadata.aliases[options.buildIdAlias] = options.buildId;
             installedBrowser.writeMetadata(metadata);
         }
-        await runSetup(installedBrowser);
         return installedBrowser;
     }
     finally {
         if ((0, fs_1.existsSync)(archivePath)) {
             await (0, promises_1.unlink)(archivePath);
-        }
-    }
-}
-async function runSetup(installedBrowser) {
-    // On Windows for Chrome invoke setup.exe to configure sandboxes.
-    if ((installedBrowser.platform === browser_data_js_1.BrowserPlatform.WIN32 ||
-        installedBrowser.platform === browser_data_js_1.BrowserPlatform.WIN64) &&
-        installedBrowser.browser === browser_data_js_1.Browser.CHROME &&
-        installedBrowser.platform === (0, detectPlatform_js_1.detectBrowserPlatform)()) {
-        try {
-            debugTime('permissions');
-            const browserDir = path_1.default.dirname(installedBrowser.executablePath);
-            const setupExePath = path_1.default.join(browserDir, 'setup.exe');
-            if (!(0, fs_1.existsSync)(setupExePath)) {
-                return;
-            }
-            (0, child_process_1.spawnSync)(path_1.default.join(browserDir, 'setup.exe'), [`--configure-browser-in-directory=` + browserDir], {
-                shell: true,
-            });
-            // TODO: Handle error here. Currently the setup.exe sometimes
-            // errors although it sets the permissions correctly.
-        }
-        finally {
-            debugTimeEnd('permissions');
         }
     }
 }
@@ -266849,7 +266713,7 @@ class HTTPRequest {
         await this.interception.handlers.reduce((promiseChain, interceptAction) => {
             return promiseChain.then(interceptAction);
         }, Promise.resolve());
-        this.interception.handlers = [];
+        this.interception.handlers = []; // TODO: verify this is correct top let gc run
         const { action } = this.interceptResolutionState();
         switch (action) {
             case 'abort':
@@ -268370,12 +268234,12 @@ let Page = (() => {
          */
         async waitForFrame(urlOrPredicate, options = {}) {
             const { timeout: ms = this.getDefaultTimeout(), signal } = options;
-            const predicate = (0, util_js_1.isString)(urlOrPredicate)
-                ? (frame) => {
+            if ((0, util_js_1.isString)(urlOrPredicate)) {
+                urlOrPredicate = (frame) => {
                     return urlOrPredicate === frame.url();
-                }
-                : urlOrPredicate;
-            return await (0, rxjs_js_1.firstValueFrom)((0, rxjs_js_1.merge)((0, util_js_1.fromEmitterEvent)(this, "frameattached" /* PageEvent.FrameAttached */), (0, util_js_1.fromEmitterEvent)(this, "framenavigated" /* PageEvent.FrameNavigated */), (0, rxjs_js_1.from)(this.frames())).pipe((0, util_js_1.filterAsync)(predicate), (0, rxjs_js_1.first)(), (0, rxjs_js_1.raceWith)((0, util_js_1.timeout)(ms), (0, util_js_1.fromAbortSignal)(signal), (0, util_js_1.fromEmitterEvent)(this, "close" /* PageEvent.Close */).pipe((0, rxjs_js_1.map)(() => {
+                };
+            }
+            return await (0, rxjs_js_1.firstValueFrom)((0, rxjs_js_1.merge)((0, util_js_1.fromEmitterEvent)(this, "frameattached" /* PageEvent.FrameAttached */), (0, util_js_1.fromEmitterEvent)(this, "framenavigated" /* PageEvent.FrameNavigated */), (0, rxjs_js_1.from)(this.frames())).pipe((0, util_js_1.filterAsync)(urlOrPredicate), (0, rxjs_js_1.first)(), (0, rxjs_js_1.raceWith)((0, util_js_1.timeout)(ms), (0, util_js_1.fromAbortSignal)(signal), (0, util_js_1.fromEmitterEvent)(this, "close" /* PageEvent.Close */).pipe((0, rxjs_js_1.map)(() => {
                 throw new Errors_js_1.TargetCloseError('Page closed.');
             })))));
         }
@@ -270400,14 +270264,12 @@ let BidiBrowser = (() => {
         #defaultViewport;
         #browserContexts = new WeakMap();
         #target = new Target_js_1.BidiBrowserTarget(this);
-        #cdpConnection;
         constructor(browserCore, opts) {
             super();
             this.#process = opts.process;
             this.#closeCallback = opts.closeCallback;
             this.#browserCore = browserCore;
             this.#defaultViewport = opts.defaultViewport;
-            this.#cdpConnection = opts.cdpConnection;
         }
         #initialize() {
             // Initializing existing contexts.
@@ -270430,10 +270292,7 @@ let BidiBrowser = (() => {
             return this.#browserCore.session.capabilities.browserVersion;
         }
         get cdpSupported() {
-            return this.#cdpConnection !== undefined;
-        }
-        get cdpConnection() {
-            return this.#cdpConnection;
+            return !this.#browserName.toLocaleLowerCase().includes('firefox');
         }
         async userAgent() {
             return this.#browserCore.session.capabilities.userAgent;
@@ -270584,11 +270443,10 @@ const util_js_1 = __nccwpck_require__(37165);
  */
 async function _connectToBiDiBrowser(connectionTransport, url, options) {
     const { ignoreHTTPSErrors = false, defaultViewport = util_js_1.DEFAULT_VIEWPORT } = options;
-    const { bidiConnection, cdpConnection, closeCallback } = await getBiDiConnection(connectionTransport, url, options);
+    const { bidiConnection, closeCallback } = await getBiDiConnection(connectionTransport, url, options);
     const BiDi = await Promise.resolve().then(() => __importStar(__nccwpck_require__(/* webpackIgnore: true */ 57034)));
     const bidiBrowser = await BiDi.BidiBrowser.create({
         connection: bidiConnection,
-        cdpConnection,
         closeCallback,
         process: undefined,
         defaultViewport: defaultViewport,
@@ -270639,7 +270497,6 @@ async function getBiDiConnection(connectionTransport, url, options) {
         acceptInsecureCerts: ignoreHTTPSErrors,
     });
     return {
-        cdpConnection,
         bidiConnection: bidiOverCdpConnection,
         closeCallback: async () => {
             // In case of BiDi over CDP, we need to close browser via CDP.
@@ -271876,6 +271733,22 @@ exports.ExposeableFunction = ExposeableFunction;
  * Copyright 2023 Google Inc.
  * SPDX-License-Identifier: Apache-2.0
  */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
 var __runInitializers = (this && this.__runInitializers) || function (thisArg, initializers, value) {
     var useValue = arguments.length > 2;
     for (var i = 0; i < initializers.length; i++) {
@@ -271910,12 +271783,20 @@ var __esDecorate = (this && this.__esDecorate) || function (ctor, descriptorIn, 
     if (target) Object.defineProperty(target, contextIn.name, descriptor);
     done = true;
 };
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
 var __setFunctionName = (this && this.__setFunctionName) || function (f, name, prefix) {
     if (typeof name === "symbol") name = name.description ? "[".concat(name.description, "]") : "";
     return Object.defineProperty(f, "name", { configurable: true, value: prefix ? "".concat(prefix, " ", name) : name });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.BidiFrame = void 0;
+const Bidi = __importStar(__nccwpck_require__(57745));
 const rxjs_js_1 = __nccwpck_require__(43836);
 const Frame_js_1 = __nccwpck_require__(52821);
 const Accessibility_js_1 = __nccwpck_require__(82765);
@@ -272218,14 +272099,12 @@ let BidiFrame = (() => {
             ]);
         }
         async waitForNavigation(options = {}) {
-            const { timeout: ms = this.timeoutSettings.navigationTimeout(), signal } = options;
+            const { timeout: ms = this.timeoutSettings.navigationTimeout() } = options;
             const frames = this.childFrames().map(frame => {
                 return frame.#detached$();
             });
             return await (0, rxjs_js_1.firstValueFrom)((0, rxjs_js_1.combineLatest)([
-                (0, util_js_1.fromEmitterEvent)(this.browsingContext, 'navigation')
-                    .pipe((0, rxjs_js_1.first)())
-                    .pipe((0, rxjs_js_1.switchMap)(({ navigation }) => {
+                (0, util_js_1.fromEmitterEvent)(this.browsingContext, 'navigation').pipe((0, rxjs_js_1.switchMap)(({ navigation }) => {
                     return this.#waitForLoad$(options).pipe((0, rxjs_js_1.delayWhen)(() => {
                         if (frames.length === 0) {
                             return (0, rxjs_js_1.of)(undefined);
@@ -272265,7 +272144,7 @@ let BidiFrame = (() => {
                 const lastRequest = request.lastRedirect ?? request;
                 const httpRequest = HTTPRequest_js_1.requests.get(lastRequest);
                 return httpRequest.response();
-            }), (0, rxjs_js_1.raceWith)((0, util_js_1.timeout)(ms), (0, util_js_1.fromAbortSignal)(signal), this.#detached$().pipe((0, rxjs_js_1.map)(() => {
+            }), (0, rxjs_js_1.raceWith)((0, util_js_1.timeout)(ms), this.#detached$().pipe((0, rxjs_js_1.map)(() => {
                 throw new Errors_js_1.TargetCloseError('Frame detached.');
             })))));
         }
@@ -272292,11 +272171,12 @@ let BidiFrame = (() => {
             await exposedFunction[Symbol.asyncDispose]();
         }
         async createCDPSession() {
-            if (!this.page().browser().cdpSupported) {
-                throw new Errors_js_1.UnsupportedOperation();
-            }
-            const cdpConnection = this.page().browser().cdpConnection;
-            return await cdpConnection._createSession({ targetId: this._id });
+            const { sessionId } = await this.client.send('Target.attachToTarget', {
+                targetId: this._id,
+                flatten: true,
+            });
+            await this.browsingContext.subscribe([Bidi.ChromiumBidi.BiDiModule.Cdp]);
+            return new CDPSession_js_1.BidiCdpSession(this, sessionId);
         }
         get #waitForLoad$() { return _private_waitForLoad$_descriptor.value; }
         get #waitForNetworkIdle$() { return _private_waitForNetworkIdle$_descriptor.value; }
@@ -272574,9 +272454,6 @@ class BidiHTTPRequest extends HTTPRequest_js_1.HTTPRequest {
             });
         }
     };
-    timing() {
-        return this.#request.timing();
-    }
 }
 exports.BidiHTTPRequest = BidiHTTPRequest;
 _a = BidiHTTPRequest;
@@ -272707,7 +272584,8 @@ let BidiHTTPResponse = (() => {
         }
         headers() {
             const headers = {};
-            for (const header of this.#data.headers) {
+            // TODO: Remove once the Firefox implementation is compliant with https://w3c.github.io/webdriver-bidi/#get-the-response-data.
+            for (const header of this.#data.headers || []) {
                 // TODO: How to handle Binary Headers
                 // https://w3c.github.io/webdriver-bidi/#type-network-Header
                 if (header.value.type === 'string') {
@@ -272723,30 +272601,7 @@ let BidiHTTPResponse = (() => {
             return this.#data.fromCache;
         }
         timing() {
-            const bidiTiming = this.#request.timing();
-            return {
-                requestTime: bidiTiming.requestTime,
-                proxyStart: -1,
-                proxyEnd: -1,
-                dnsStart: bidiTiming.dnsStart,
-                dnsEnd: bidiTiming.dnsEnd,
-                connectStart: bidiTiming.connectStart,
-                connectEnd: bidiTiming.connectEnd,
-                sslStart: bidiTiming.tlsStart,
-                sslEnd: -1,
-                workerStart: -1,
-                workerReady: -1,
-                workerFetchStart: -1,
-                workerRespondWithSettled: -1,
-                workerRouterEvaluationStart: -1,
-                workerCacheLookupStart: -1,
-                sendStart: bidiTiming.requestStart,
-                sendEnd: -1,
-                pushStart: -1,
-                pushEnd: -1,
-                receiveHeadersStart: bidiTiming.responseStart,
-                receiveHeadersEnd: bidiTiming.responseEnd,
-            };
+            throw new Errors_js_1.UnsupportedOperation();
         }
         frame() {
             return this.#request.frame();
@@ -274400,17 +274255,11 @@ class BidiRealm extends Realm_js_1.Realm {
                 : `${functionDeclaration}\n${sourceUrlComment}\n`;
             responsePromise = this.realm.callFunction(functionDeclaration, 
             /* awaitPromise= */ true, {
-                // LazyArgs are used only internally and should not affect the order
-                // evaluate calls for the public APIs.
-                arguments: args.some(arg => {
-                    return arg instanceof LazyArg_js_1.LazyArg;
-                })
+                arguments: args.length
                     ? await Promise.all(args.map(arg => {
-                        return this.serializeAsync(arg);
-                    }))
-                    : args.map(arg => {
                         return this.serialize(arg);
-                    }),
+                    }))
+                    : [],
                 resultOwnership,
                 userActivation: true,
                 serializationOptions,
@@ -274431,13 +274280,10 @@ class BidiRealm extends Realm_js_1.Realm {
         }
         return JSHandle_js_1.BidiJSHandle.from(result, this);
     }
-    async serializeAsync(arg) {
+    async serialize(arg) {
         if (arg instanceof LazyArg_js_1.LazyArg) {
             arg = await arg.get(this);
         }
-        return this.serialize(arg);
-    }
-    serialize(arg) {
         if (arg instanceof JSHandle_js_1.BidiJSHandle || arg instanceof ElementHandle_js_1.BidiElementHandle) {
             if (arg.realm !== this) {
                 if (!(arg.realm instanceof BidiFrameRealm) ||
@@ -276352,7 +276198,6 @@ let Request = (() => {
                     return;
                 }
                 this.#response = event.response;
-                this.#event.request.timings = event.request.timings;
                 this.emit('success', this.#response);
                 // In case this is a redirect.
                 if (this.#response.status >= 300 && this.#response.status < 400) {
@@ -276464,9 +276309,6 @@ let Request = (() => {
         [(_dispose_decorators = [decorators_js_1.inertIfDisposed], disposable_js_1.disposeSymbol)]() {
             this.#disposables.dispose();
             super[disposable_js_1.disposeSymbol]();
-        }
-        timing() {
-            return this.#event.request.timings;
         }
     };
 })();
@@ -276757,10 +276599,7 @@ let UserContext = (() => {
         #initialize() {
             const browserEmitter = this.#disposables.use(new EventEmitter_js_1.EventEmitter(this.browser));
             browserEmitter.once('closed', ({ reason }) => {
-                this.dispose(`User context was closed: ${reason}`);
-            });
-            browserEmitter.once('disconnected', ({ reason }) => {
-                this.dispose(`User context was closed: ${reason}`);
+                this.dispose(`User context already closed: ${reason}`);
             });
             const sessionEmitter = this.#disposables.use(new EventEmitter_js_1.EventEmitter(this.#session));
             sessionEmitter.on('browsingContext.contextCreated', info => {
@@ -279339,7 +279178,7 @@ exports.DeviceRequestPromptDevice = DeviceRequestPromptDevice;
  * @example
  *
  * ```ts
- * const [devicePrompt] = Promise.all([
+ * const [deviceRequest] = Promise.all([
  *   page.waitForDevicePrompt(),
  *   page.click('#connect-bluetooth'),
  * ]);
@@ -280589,17 +280428,9 @@ class ExecutionContext extends EventEmitter_js_1.EventEmitter {
             callFunctionOnPromise = this.#client.send('Runtime.callFunctionOn', {
                 functionDeclaration: functionDeclarationWithSourceUrl,
                 executionContextId: this.#id,
-                // LazyArgs are used only internally and should not affect the order
-                // evaluate calls for the public APIs.
-                arguments: args.some(arg => {
-                    return arg instanceof LazyArg_js_1.LazyArg;
-                })
-                    ? await Promise.all(args.map(arg => {
-                        return convertArgumentAsync(this, arg);
-                    }))
-                    : args.map(arg => {
-                        return convertArgument(this, arg);
-                    }),
+                arguments: args.length
+                    ? await Promise.all(args.map(convertArgument.bind(this)))
+                    : [],
                 returnByValue,
                 awaitPromise: true,
                 userGesture: true,
@@ -280619,13 +280450,10 @@ class ExecutionContext extends EventEmitter_js_1.EventEmitter {
         return returnByValue
             ? (0, utils_js_1.valueFromRemoteObject)(remoteObject)
             : this.#world.createCdpHandle(remoteObject);
-        async function convertArgumentAsync(context, arg) {
+        async function convertArgument(arg) {
             if (arg instanceof LazyArg_js_1.LazyArg) {
-                arg = await arg.get(context);
+                arg = await arg.get(this);
             }
-            return convertArgument(context, arg);
-        }
-        function convertArgument(context, arg) {
             if (typeof arg === 'bigint') {
                 // eslint-disable-line valid-typeof
                 return { unserializableValue: `${arg.toString()}n` };
@@ -280646,7 +280474,7 @@ class ExecutionContext extends EventEmitter_js_1.EventEmitter {
                 ? arg
                 : null;
             if (objectHandle) {
-                if (objectHandle.realm !== context.#world) {
+                if (objectHandle.realm !== this.#world) {
                     throw new Error('JSHandles can be evaluated only in the context they were created!');
                 }
                 if (objectHandle.disposed) {
@@ -281223,8 +281051,8 @@ let CdpFrame = (() => {
             }
         }
         async waitForNavigation(options = {}) {
-            const { waitUntil = ['load'], timeout = this._frameManager.timeoutSettings.navigationTimeout(), signal, } = options;
-            const watcher = new LifecycleWatcher_js_1.LifecycleWatcher(this._frameManager.networkManager, this, waitUntil, timeout, signal);
+            const { waitUntil = ['load'], timeout = this._frameManager.timeoutSettings.navigationTimeout(), } = options;
+            const watcher = new LifecycleWatcher_js_1.LifecycleWatcher(this._frameManager.networkManager, this, waitUntil, timeout);
             const error = await Deferred_js_1.Deferred.race([
                 watcher.terminationPromise(),
                 ...(options.ignoreSameDocumentNavigation
@@ -283126,7 +282954,7 @@ class LifecycleWatcher {
     #hasSameDocumentNavigation;
     #swapped;
     #navigationResponseReceived;
-    constructor(networkManager, frame, waitUntil, timeout, signal) {
+    constructor(networkManager, frame, waitUntil, timeout) {
         if (Array.isArray(waitUntil)) {
             waitUntil = waitUntil.slice();
         }
@@ -283138,9 +282966,6 @@ class LifecycleWatcher {
             const protocolEvent = puppeteerToProtocolLifecycle.get(value);
             (0, assert_js_1.assert)(protocolEvent, 'Unknown value for options.waitUntil: ' + value);
             return protocolEvent;
-        });
-        signal?.addEventListener('abort', () => {
-            this.#terminationDeferred.reject(signal.reason);
         });
         this.#frame = frame;
         this.#timeout = timeout;
@@ -283244,6 +283069,10 @@ class LifecycleWatcher {
                     return false;
                 }
             }
+            // TODO(#1): Its possible we don't need this check
+            // CDP provided the correct order for Loading Events
+            // And NetworkIdle is a global state
+            // Consider removing
             for (const child of frame.childFrames()) {
                 if (child._hasStartedLoading &&
                     !checkLifecycle(child, expectedLifecycle)) {
@@ -283963,7 +283792,6 @@ const CDPSession_js_1 = __nccwpck_require__(77409);
 const Page_js_1 = __nccwpck_require__(69029);
 const ConsoleMessage_js_1 = __nccwpck_require__(60801);
 const Errors_js_1 = __nccwpck_require__(41938);
-const EventEmitter_js_1 = __nccwpck_require__(43951);
 const FileChooser_js_1 = __nccwpck_require__(54258);
 const NetworkManagerEvents_js_1 = __nccwpck_require__(69161);
 const util_js_1 = __nccwpck_require__(37165);
@@ -284037,6 +283865,84 @@ class CdpPage extends Page_js_1.Page {
     #sessionCloseDeferred = Deferred_js_1.Deferred.create();
     #serviceWorkerBypassed = false;
     #userDragInterceptionEnabled = false;
+    #frameManagerHandlers = [
+        [
+            FrameManagerEvents_js_1.FrameManagerEvent.FrameAttached,
+            (frame) => {
+                this.emit("frameattached" /* PageEvent.FrameAttached */, frame);
+            },
+        ],
+        [
+            FrameManagerEvents_js_1.FrameManagerEvent.FrameDetached,
+            (frame) => {
+                this.emit("framedetached" /* PageEvent.FrameDetached */, frame);
+            },
+        ],
+        [
+            FrameManagerEvents_js_1.FrameManagerEvent.FrameNavigated,
+            (frame) => {
+                this.emit("framenavigated" /* PageEvent.FrameNavigated */, frame);
+            },
+        ],
+    ];
+    #networkManagerHandlers = [
+        [
+            NetworkManagerEvents_js_1.NetworkManagerEvent.Request,
+            (request) => {
+                this.emit("request" /* PageEvent.Request */, request);
+            },
+        ],
+        [
+            NetworkManagerEvents_js_1.NetworkManagerEvent.RequestServedFromCache,
+            (request) => {
+                this.emit("requestservedfromcache" /* PageEvent.RequestServedFromCache */, request);
+            },
+        ],
+        [
+            NetworkManagerEvents_js_1.NetworkManagerEvent.Response,
+            (response) => {
+                this.emit("response" /* PageEvent.Response */, response);
+            },
+        ],
+        [
+            NetworkManagerEvents_js_1.NetworkManagerEvent.RequestFailed,
+            (request) => {
+                this.emit("requestfailed" /* PageEvent.RequestFailed */, request);
+            },
+        ],
+        [
+            NetworkManagerEvents_js_1.NetworkManagerEvent.RequestFinished,
+            (request) => {
+                this.emit("requestfinished" /* PageEvent.RequestFinished */, request);
+            },
+        ],
+    ];
+    #sessionHandlers = [
+        [
+            CDPSession_js_1.CDPSessionEvent.Disconnected,
+            () => {
+                this.#sessionCloseDeferred.reject(new Errors_js_1.TargetCloseError('Target closed'));
+            },
+        ],
+        [
+            'Page.domContentEventFired',
+            () => {
+                return this.emit("domcontentloaded" /* PageEvent.DOMContentLoaded */, undefined);
+            },
+        ],
+        [
+            'Page.loadEventFired',
+            () => {
+                return this.emit("load" /* PageEvent.Load */, undefined);
+            },
+        ],
+        ['Page.javascriptDialogOpening', this.#onDialog.bind(this)],
+        ['Runtime.exceptionThrown', this.#handleException.bind(this)],
+        ['Inspector.targetCrashed', this.#onTargetCrashed.bind(this)],
+        ['Performance.metrics', this.#emitMetrics.bind(this)],
+        ['Log.entryAdded', this.#onLogEntryAdded.bind(this)],
+        ['Page.fileChooserOpened', this.#onFileChooser.bind(this)],
+    ];
     constructor(client, target) {
         super();
         this.#primaryTargetClient = client;
@@ -284054,38 +283960,19 @@ class CdpPage extends Page_js_1.Page {
         this.#tracing = new Tracing_js_1.Tracing(client);
         this.#coverage = new Coverage_js_1.Coverage(client);
         this.#viewport = null;
-        const frameManagerEmitter = new EventEmitter_js_1.EventEmitter(this.#frameManager);
-        frameManagerEmitter.on(FrameManagerEvents_js_1.FrameManagerEvent.FrameAttached, frame => {
-            this.emit("frameattached" /* PageEvent.FrameAttached */, frame);
-        });
-        frameManagerEmitter.on(FrameManagerEvents_js_1.FrameManagerEvent.FrameDetached, frame => {
-            this.emit("framedetached" /* PageEvent.FrameDetached */, frame);
-        });
-        frameManagerEmitter.on(FrameManagerEvents_js_1.FrameManagerEvent.FrameNavigated, frame => {
-            this.emit("framenavigated" /* PageEvent.FrameNavigated */, frame);
-        });
-        frameManagerEmitter.on(FrameManagerEvents_js_1.FrameManagerEvent.ConsoleApiCalled, ([world, event]) => {
+        for (const [eventName, handler] of this.#frameManagerHandlers) {
+            this.#frameManager.on(eventName, handler);
+        }
+        this.#frameManager.on(FrameManagerEvents_js_1.FrameManagerEvent.ConsoleApiCalled, ([world, event]) => {
             this.#onConsoleAPI(world, event);
         });
-        frameManagerEmitter.on(FrameManagerEvents_js_1.FrameManagerEvent.BindingCalled, ([world, event]) => {
+        this.#frameManager.on(FrameManagerEvents_js_1.FrameManagerEvent.BindingCalled, ([world, event]) => {
             void this.#onBindingCalled(world, event);
         });
-        const networkManagerEmitter = new EventEmitter_js_1.EventEmitter(this.#frameManager.networkManager);
-        networkManagerEmitter.on(NetworkManagerEvents_js_1.NetworkManagerEvent.Request, request => {
-            this.emit("request" /* PageEvent.Request */, request);
-        });
-        networkManagerEmitter.on(NetworkManagerEvents_js_1.NetworkManagerEvent.RequestServedFromCache, request => {
-            this.emit("requestservedfromcache" /* PageEvent.RequestServedFromCache */, request);
-        });
-        networkManagerEmitter.on(NetworkManagerEvents_js_1.NetworkManagerEvent.Response, response => {
-            this.emit("response" /* PageEvent.Response */, response);
-        });
-        networkManagerEmitter.on(NetworkManagerEvents_js_1.NetworkManagerEvent.RequestFailed, request => {
-            this.emit("requestfailed" /* PageEvent.RequestFailed */, request);
-        });
-        networkManagerEmitter.on(NetworkManagerEvents_js_1.NetworkManagerEvent.RequestFinished, request => {
-            this.emit("requestfinished" /* PageEvent.RequestFinished */, request);
-        });
+        for (const [eventName, handler] of this.#networkManagerHandlers) {
+            // TODO: Remove any.
+            this.#frameManager.networkManager.on(eventName, handler);
+        }
         this.#tabTargetClient.on(CDPSession_js_1.CDPSessionEvent.Swapped, this.#onActivation.bind(this));
         this.#tabTargetClient.on(CDPSession_js_1.CDPSessionEvent.Ready, this.#onSecondaryTarget.bind(this));
         this.#targetManager.on("targetGone" /* TargetManagerEvent.TargetGone */, this.#onDetachedFromTarget);
@@ -284147,23 +284034,11 @@ class CdpPage extends Page_js_1.Page {
      * during a navigation to a prerended page.
      */
     #setupPrimaryTargetListeners() {
-        const clientEmitter = new EventEmitter_js_1.EventEmitter(this.#primaryTargetClient);
-        clientEmitter.on(CDPSession_js_1.CDPSessionEvent.Ready, this.#onAttachedToTarget);
-        clientEmitter.on(CDPSession_js_1.CDPSessionEvent.Disconnected, () => {
-            this.#sessionCloseDeferred.reject(new Errors_js_1.TargetCloseError('Target closed'));
-        });
-        clientEmitter.on('Page.domContentEventFired', () => {
-            this.emit("domcontentloaded" /* PageEvent.DOMContentLoaded */, undefined);
-        });
-        clientEmitter.on('Page.loadEventFired', () => {
-            this.emit("load" /* PageEvent.Load */, undefined);
-        });
-        clientEmitter.on('Page.javascriptDialogOpening', this.#onDialog.bind(this));
-        clientEmitter.on('Runtime.exceptionThrown', this.#handleException.bind(this));
-        clientEmitter.on('Inspector.targetCrashed', this.#onTargetCrashed.bind(this));
-        clientEmitter.on('Performance.metrics', this.#emitMetrics.bind(this));
-        clientEmitter.on('Log.entryAdded', this.#onLogEntryAdded.bind(this));
-        clientEmitter.on('Page.fileChooserOpened', this.#onFileChooser.bind(this));
+        this.#primaryTargetClient.on(CDPSession_js_1.CDPSessionEvent.Ready, this.#onAttachedToTarget);
+        for (const [eventName, handler] of this.#sessionHandlers) {
+            // TODO: Remove any.
+            this.#primaryTargetClient.on(eventName, handler);
+        }
     }
     #onDetachedFromTarget = (target) => {
         const sessionId = target._session()?.id();
@@ -284359,16 +284234,7 @@ class CdpPage extends Page_js_1.Page {
             }
             return cookie;
         };
-        return originalCookies.map(filterUnsupportedAttributes).map(cookie => {
-            return {
-                ...cookie,
-                // TODO: a breaking change is needed in Puppeteer types to support other
-                // partition keys.
-                partitionKey: cookie.partitionKey
-                    ? cookie.partitionKey.topLevelSite
-                    : undefined,
-            };
-        });
+        return originalCookies.map(filterUnsupportedAttributes);
     }
     async deleteCookie(...cookies) {
         const pageURL = this.url();
@@ -284395,19 +284261,7 @@ class CdpPage extends Page_js_1.Page {
         await this.deleteCookie(...items);
         if (items.length) {
             await this.#primaryTargetClient.send('Network.setCookies', {
-                cookies: items.map(cookieParam => {
-                    return {
-                        ...cookieParam,
-                        partitionKey: cookieParam.partitionKey
-                            ? {
-                                // TODO: a breaking change neeeded to change the partition key
-                                // type in Puppeteer.
-                                topLevelSite: cookieParam.partitionKey,
-                                hasCrossSiteAncestor: false,
-                            }
-                            : undefined,
-                    };
-                }),
+                cookies: items,
             });
         }
     }
@@ -288141,7 +287995,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.EventEmitter = void 0;
+exports.EventSubscription = exports.EventEmitter = void 0;
 const mitt_js_1 = __importDefault(__nccwpck_require__(35182));
 const disposable_js_1 = __nccwpck_require__(32608);
 /**
@@ -288265,6 +288119,24 @@ class EventEmitter {
     }
 }
 exports.EventEmitter = EventEmitter;
+/**
+ * @internal
+ */
+class EventSubscription {
+    #target;
+    #type;
+    #handler;
+    constructor(target, type, handler) {
+        this.#target = target;
+        this.#type = type;
+        this.#handler = handler;
+        this.#target.on(this.#type, this.#handler);
+    }
+    [disposable_js_1.disposeSymbol]() {
+        this.#target.off(this.#type, this.#handler);
+    }
+}
+exports.EventSubscription = EventSubscription;
 //# sourceMappingURL=EventEmitter.js.map
 
 /***/ }),
@@ -290688,7 +290560,7 @@ exports.packageVersion = void 0;
 /**
  * @internal
  */
-exports.packageVersion = '22.15.0';
+exports.packageVersion = '22.13.1';
 //# sourceMappingURL=version.js.map
 
 /***/ }),
@@ -291133,7 +291005,7 @@ class FirefoxLauncher extends ProductLauncher_js_1.ProductLauncher {
         if (profileArgIndex !== -1) {
             userDataDir = firefoxArguments[profileArgIndex + 1];
             if (!userDataDir) {
-                throw new Error(`Missing value for profile command line argument`);
+                throw new Error(`Firefox profile not found at '${userDataDir}'`);
             }
             // When using a custom Firefox profile it needs to be populated
             // with required preferences.
@@ -291209,7 +291081,7 @@ class FirefoxLauncher extends ProductLauncher_js_1.ProductLauncher {
     }
     defaultArgs(options = {}) {
         const { devtools = false, headless = !devtools, args = [], userDataDir = null, } = options;
-        const firefoxArguments = [];
+        const firefoxArguments = ['--no-remote'];
         switch (os_1.default.platform()) {
             case 'darwin':
                 firefoxArguments.push('--foreground');
@@ -291350,24 +291222,16 @@ class PipeTransport {
     onmessage;
     constructor(pipeWrite, pipeRead) {
         this.#pipeWrite = pipeWrite;
-        const pipeReadEmitter = this.#subscriptions.use(
-        // NodeJS event emitters don't support `*` so we need to typecast
-        // As long as we don't use it we should be OK.
-        new EventEmitter_js_1.EventEmitter(pipeRead));
-        pipeReadEmitter.on('data', (buffer) => {
+        this.#subscriptions.use(new EventEmitter_js_1.EventSubscription(pipeRead, 'data', (buffer) => {
             return this.#dispatch(buffer);
-        });
-        pipeReadEmitter.on('close', () => {
+        }));
+        this.#subscriptions.use(new EventEmitter_js_1.EventSubscription(pipeRead, 'close', () => {
             if (this.onclose) {
                 this.onclose.call(null);
             }
-        });
-        pipeReadEmitter.on('error', util_js_1.debugError);
-        const pipeWriteEmitter = this.#subscriptions.use(
-        // NodeJS event emitters don't support `*` so we need to typecast
-        // As long as we don't use it we should be OK.
-        new EventEmitter_js_1.EventEmitter(pipeRead));
-        pipeWriteEmitter.on('error', util_js_1.debugError);
+        }));
+        this.#subscriptions.use(new EventEmitter_js_1.EventSubscription(pipeRead, 'error', util_js_1.debugError));
+        this.#subscriptions.use(new EventEmitter_js_1.EventSubscription(pipeWrite, 'error', util_js_1.debugError));
     }
     send(message) {
         (0, assert_js_1.assert)(!this.#isClosed, '`PipeTransport` is closed.');
@@ -291637,7 +291501,6 @@ class ProductLauncher {
         });
         return await BiDi.BidiBrowser.create({
             connection: bidiConnection,
-            cdpConnection: connection,
             closeCallback,
             process: browserProcess.nodeProcess,
             defaultViewport: opts.defaultViewport,
@@ -292381,8 +292244,8 @@ exports.PUPPETEER_REVISIONS = void 0;
  * @internal
  */
 exports.PUPPETEER_REVISIONS = Object.freeze({
-    chrome: '127.0.6533.88',
-    'chrome-headless-shell': '127.0.6533.88',
+    chrome: '126.0.6478.182',
+    'chrome-headless-shell': '126.0.6478.182',
     firefox: 'latest',
 });
 //# sourceMappingURL=revisions.js.map
