@@ -144,4 +144,5 @@ under the License.
 All other trademarks referenced herein are the property of their respective owners.
 ---
 Copyright © 2017-2024 [Cloud Posse, LLC](https://cpco.io/copyright)
+
 Copyright © 2026 StepSecurity
