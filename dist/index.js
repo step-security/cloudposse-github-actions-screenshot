@@ -110,1950 +110,6 @@ async function readYamlFile(filePath) {
 
 /***/ }),
 
-/***/ 94609:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-/* module decorator */ module = __nccwpck_require__.nmd(module);
-
-const colorConvert = __nccwpck_require__(744);
-
-const wrapAnsi16 = (fn, offset) => function () {
-	const code = fn.apply(colorConvert, arguments);
-	return `\u001B[${code + offset}m`;
-};
-
-const wrapAnsi256 = (fn, offset) => function () {
-	const code = fn.apply(colorConvert, arguments);
-	return `\u001B[${38 + offset};5;${code}m`;
-};
-
-const wrapAnsi16m = (fn, offset) => function () {
-	const rgb = fn.apply(colorConvert, arguments);
-	return `\u001B[${38 + offset};2;${rgb[0]};${rgb[1]};${rgb[2]}m`;
-};
-
-function assembleStyles() {
-	const codes = new Map();
-	const styles = {
-		modifier: {
-			reset: [0, 0],
-			// 21 isn't widely supported and 22 does the same thing
-			bold: [1, 22],
-			dim: [2, 22],
-			italic: [3, 23],
-			underline: [4, 24],
-			inverse: [7, 27],
-			hidden: [8, 28],
-			strikethrough: [9, 29]
-		},
-		color: {
-			black: [30, 39],
-			red: [31, 39],
-			green: [32, 39],
-			yellow: [33, 39],
-			blue: [34, 39],
-			magenta: [35, 39],
-			cyan: [36, 39],
-			white: [37, 39],
-			gray: [90, 39],
-
-			// Bright color
-			redBright: [91, 39],
-			greenBright: [92, 39],
-			yellowBright: [93, 39],
-			blueBright: [94, 39],
-			magentaBright: [95, 39],
-			cyanBright: [96, 39],
-			whiteBright: [97, 39]
-		},
-		bgColor: {
-			bgBlack: [40, 49],
-			bgRed: [41, 49],
-			bgGreen: [42, 49],
-			bgYellow: [43, 49],
-			bgBlue: [44, 49],
-			bgMagenta: [45, 49],
-			bgCyan: [46, 49],
-			bgWhite: [47, 49],
-
-			// Bright color
-			bgBlackBright: [100, 49],
-			bgRedBright: [101, 49],
-			bgGreenBright: [102, 49],
-			bgYellowBright: [103, 49],
-			bgBlueBright: [104, 49],
-			bgMagentaBright: [105, 49],
-			bgCyanBright: [106, 49],
-			bgWhiteBright: [107, 49]
-		}
-	};
-
-	// Fix humans
-	styles.color.grey = styles.color.gray;
-
-	for (const groupName of Object.keys(styles)) {
-		const group = styles[groupName];
-
-		for (const styleName of Object.keys(group)) {
-			const style = group[styleName];
-
-			styles[styleName] = {
-				open: `\u001B[${style[0]}m`,
-				close: `\u001B[${style[1]}m`
-			};
-
-			group[styleName] = styles[styleName];
-
-			codes.set(style[0], style[1]);
-		}
-
-		Object.defineProperty(styles, groupName, {
-			value: group,
-			enumerable: false
-		});
-
-		Object.defineProperty(styles, 'codes', {
-			value: codes,
-			enumerable: false
-		});
-	}
-
-	const ansi2ansi = n => n;
-	const rgb2rgb = (r, g, b) => [r, g, b];
-
-	styles.color.close = '\u001B[39m';
-	styles.bgColor.close = '\u001B[49m';
-
-	styles.color.ansi = {
-		ansi: wrapAnsi16(ansi2ansi, 0)
-	};
-	styles.color.ansi256 = {
-		ansi256: wrapAnsi256(ansi2ansi, 0)
-	};
-	styles.color.ansi16m = {
-		rgb: wrapAnsi16m(rgb2rgb, 0)
-	};
-
-	styles.bgColor.ansi = {
-		ansi: wrapAnsi16(ansi2ansi, 10)
-	};
-	styles.bgColor.ansi256 = {
-		ansi256: wrapAnsi256(ansi2ansi, 10)
-	};
-	styles.bgColor.ansi16m = {
-		rgb: wrapAnsi16m(rgb2rgb, 10)
-	};
-
-	for (let key of Object.keys(colorConvert)) {
-		if (typeof colorConvert[key] !== 'object') {
-			continue;
-		}
-
-		const suite = colorConvert[key];
-
-		if (key === 'ansi16') {
-			key = 'ansi';
-		}
-
-		if ('ansi16' in suite) {
-			styles.color.ansi[key] = wrapAnsi16(suite.ansi16, 0);
-			styles.bgColor.ansi[key] = wrapAnsi16(suite.ansi16, 10);
-		}
-
-		if ('ansi256' in suite) {
-			styles.color.ansi256[key] = wrapAnsi256(suite.ansi256, 0);
-			styles.bgColor.ansi256[key] = wrapAnsi256(suite.ansi256, 10);
-		}
-
-		if ('rgb' in suite) {
-			styles.color.ansi16m[key] = wrapAnsi16m(suite.rgb, 0);
-			styles.bgColor.ansi16m[key] = wrapAnsi16m(suite.rgb, 10);
-		}
-	}
-
-	return styles;
-}
-
-// Make the export immutable
-Object.defineProperty(module, 'exports', {
-	enumerable: true,
-	get: assembleStyles
-});
-
-
-/***/ }),
-
-/***/ 71318:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-const escapeStringRegexp = __nccwpck_require__(15684);
-const ansiStyles = __nccwpck_require__(94609);
-const stdoutColor = (__nccwpck_require__(85809).stdout);
-
-const template = __nccwpck_require__(25125);
-
-const isSimpleWindowsTerm = process.platform === 'win32' && !(process.env.TERM || '').toLowerCase().startsWith('xterm');
-
-// `supportsColor.level` → `ansiStyles.color[name]` mapping
-const levelMapping = ['ansi', 'ansi', 'ansi256', 'ansi16m'];
-
-// `color-convert` models to exclude from the Chalk API due to conflicts and such
-const skipModels = new Set(['gray']);
-
-const styles = Object.create(null);
-
-function applyOptions(obj, options) {
-	options = options || {};
-
-	// Detect level if not set manually
-	const scLevel = stdoutColor ? stdoutColor.level : 0;
-	obj.level = options.level === undefined ? scLevel : options.level;
-	obj.enabled = 'enabled' in options ? options.enabled : obj.level > 0;
-}
-
-function Chalk(options) {
-	// We check for this.template here since calling `chalk.constructor()`
-	// by itself will have a `this` of a previously constructed chalk object
-	if (!this || !(this instanceof Chalk) || this.template) {
-		const chalk = {};
-		applyOptions(chalk, options);
-
-		chalk.template = function () {
-			const args = [].slice.call(arguments);
-			return chalkTag.apply(null, [chalk.template].concat(args));
-		};
-
-		Object.setPrototypeOf(chalk, Chalk.prototype);
-		Object.setPrototypeOf(chalk.template, chalk);
-
-		chalk.template.constructor = Chalk;
-
-		return chalk.template;
-	}
-
-	applyOptions(this, options);
-}
-
-// Use bright blue on Windows as the normal blue color is illegible
-if (isSimpleWindowsTerm) {
-	ansiStyles.blue.open = '\u001B[94m';
-}
-
-for (const key of Object.keys(ansiStyles)) {
-	ansiStyles[key].closeRe = new RegExp(escapeStringRegexp(ansiStyles[key].close), 'g');
-
-	styles[key] = {
-		get() {
-			const codes = ansiStyles[key];
-			return build.call(this, this._styles ? this._styles.concat(codes) : [codes], this._empty, key);
-		}
-	};
-}
-
-styles.visible = {
-	get() {
-		return build.call(this, this._styles || [], true, 'visible');
-	}
-};
-
-ansiStyles.color.closeRe = new RegExp(escapeStringRegexp(ansiStyles.color.close), 'g');
-for (const model of Object.keys(ansiStyles.color.ansi)) {
-	if (skipModels.has(model)) {
-		continue;
-	}
-
-	styles[model] = {
-		get() {
-			const level = this.level;
-			return function () {
-				const open = ansiStyles.color[levelMapping[level]][model].apply(null, arguments);
-				const codes = {
-					open,
-					close: ansiStyles.color.close,
-					closeRe: ansiStyles.color.closeRe
-				};
-				return build.call(this, this._styles ? this._styles.concat(codes) : [codes], this._empty, model);
-			};
-		}
-	};
-}
-
-ansiStyles.bgColor.closeRe = new RegExp(escapeStringRegexp(ansiStyles.bgColor.close), 'g');
-for (const model of Object.keys(ansiStyles.bgColor.ansi)) {
-	if (skipModels.has(model)) {
-		continue;
-	}
-
-	const bgModel = 'bg' + model[0].toUpperCase() + model.slice(1);
-	styles[bgModel] = {
-		get() {
-			const level = this.level;
-			return function () {
-				const open = ansiStyles.bgColor[levelMapping[level]][model].apply(null, arguments);
-				const codes = {
-					open,
-					close: ansiStyles.bgColor.close,
-					closeRe: ansiStyles.bgColor.closeRe
-				};
-				return build.call(this, this._styles ? this._styles.concat(codes) : [codes], this._empty, model);
-			};
-		}
-	};
-}
-
-const proto = Object.defineProperties(() => {}, styles);
-
-function build(_styles, _empty, key) {
-	const builder = function () {
-		return applyStyle.apply(builder, arguments);
-	};
-
-	builder._styles = _styles;
-	builder._empty = _empty;
-
-	const self = this;
-
-	Object.defineProperty(builder, 'level', {
-		enumerable: true,
-		get() {
-			return self.level;
-		},
-		set(level) {
-			self.level = level;
-		}
-	});
-
-	Object.defineProperty(builder, 'enabled', {
-		enumerable: true,
-		get() {
-			return self.enabled;
-		},
-		set(enabled) {
-			self.enabled = enabled;
-		}
-	});
-
-	// See below for fix regarding invisible grey/dim combination on Windows
-	builder.hasGrey = this.hasGrey || key === 'gray' || key === 'grey';
-
-	// `__proto__` is used because we must return a function, but there is
-	// no way to create a function with a different prototype
-	builder.__proto__ = proto; // eslint-disable-line no-proto
-
-	return builder;
-}
-
-function applyStyle() {
-	// Support varags, but simply cast to string in case there's only one arg
-	const args = arguments;
-	const argsLen = args.length;
-	let str = String(arguments[0]);
-
-	if (argsLen === 0) {
-		return '';
-	}
-
-	if (argsLen > 1) {
-		// Don't slice `arguments`, it prevents V8 optimizations
-		for (let a = 1; a < argsLen; a++) {
-			str += ' ' + args[a];
-		}
-	}
-
-	if (!this.enabled || this.level <= 0 || !str) {
-		return this._empty ? '' : str;
-	}
-
-	// Turns out that on Windows dimmed gray text becomes invisible in cmd.exe,
-	// see https://github.com/chalk/chalk/issues/58
-	// If we're on Windows and we're dealing with a gray color, temporarily make 'dim' a noop.
-	const originalDim = ansiStyles.dim.open;
-	if (isSimpleWindowsTerm && this.hasGrey) {
-		ansiStyles.dim.open = '';
-	}
-
-	for (const code of this._styles.slice().reverse()) {
-		// Replace any instances already present with a re-opening code
-		// otherwise only the part of the string until said closing code
-		// will be colored, and the rest will simply be 'plain'.
-		str = code.open + str.replace(code.closeRe, code.open) + code.close;
-
-		// Close the styling before a linebreak and reopen
-		// after next line to fix a bleed issue on macOS
-		// https://github.com/chalk/chalk/pull/92
-		str = str.replace(/\r?\n/g, `${code.close}$&${code.open}`);
-	}
-
-	// Reset the original `dim` if we changed it to work around the Windows dimmed gray issue
-	ansiStyles.dim.open = originalDim;
-
-	return str;
-}
-
-function chalkTag(chalk, strings) {
-	if (!Array.isArray(strings)) {
-		// If chalk() was called by itself or with a string,
-		// return the string itself as a string.
-		return [].slice.call(arguments, 1).join(' ');
-	}
-
-	const args = [].slice.call(arguments, 2);
-	const parts = [strings.raw[0]];
-
-	for (let i = 1; i < strings.length; i++) {
-		parts.push(String(args[i - 1]).replace(/[{}\\]/g, '\\$&'));
-		parts.push(String(strings.raw[i]));
-	}
-
-	return template(chalk, parts.join(''));
-}
-
-Object.defineProperties(Chalk.prototype, styles);
-
-module.exports = Chalk(); // eslint-disable-line new-cap
-module.exports.supportsColor = stdoutColor;
-module.exports["default"] = module.exports; // For TypeScript
-
-
-/***/ }),
-
-/***/ 25125:
-/***/ ((module) => {
-
-"use strict";
-
-const TEMPLATE_REGEX = /(?:\\(u[a-f\d]{4}|x[a-f\d]{2}|.))|(?:\{(~)?(\w+(?:\([^)]*\))?(?:\.\w+(?:\([^)]*\))?)*)(?:[ \t]|(?=\r?\n)))|(\})|((?:.|[\r\n\f])+?)/gi;
-const STYLE_REGEX = /(?:^|\.)(\w+)(?:\(([^)]*)\))?/g;
-const STRING_REGEX = /^(['"])((?:\\.|(?!\1)[^\\])*)\1$/;
-const ESCAPE_REGEX = /\\(u[a-f\d]{4}|x[a-f\d]{2}|.)|([^\\])/gi;
-
-const ESCAPES = new Map([
-	['n', '\n'],
-	['r', '\r'],
-	['t', '\t'],
-	['b', '\b'],
-	['f', '\f'],
-	['v', '\v'],
-	['0', '\0'],
-	['\\', '\\'],
-	['e', '\u001B'],
-	['a', '\u0007']
-]);
-
-function unescape(c) {
-	if ((c[0] === 'u' && c.length === 5) || (c[0] === 'x' && c.length === 3)) {
-		return String.fromCharCode(parseInt(c.slice(1), 16));
-	}
-
-	return ESCAPES.get(c) || c;
-}
-
-function parseArguments(name, args) {
-	const results = [];
-	const chunks = args.trim().split(/\s*,\s*/g);
-	let matches;
-
-	for (const chunk of chunks) {
-		if (!isNaN(chunk)) {
-			results.push(Number(chunk));
-		} else if ((matches = chunk.match(STRING_REGEX))) {
-			results.push(matches[2].replace(ESCAPE_REGEX, (m, escape, chr) => escape ? unescape(escape) : chr));
-		} else {
-			throw new Error(`Invalid Chalk template style argument: ${chunk} (in style '${name}')`);
-		}
-	}
-
-	return results;
-}
-
-function parseStyle(style) {
-	STYLE_REGEX.lastIndex = 0;
-
-	const results = [];
-	let matches;
-
-	while ((matches = STYLE_REGEX.exec(style)) !== null) {
-		const name = matches[1];
-
-		if (matches[2]) {
-			const args = parseArguments(name, matches[2]);
-			results.push([name].concat(args));
-		} else {
-			results.push([name]);
-		}
-	}
-
-	return results;
-}
-
-function buildStyle(chalk, styles) {
-	const enabled = {};
-
-	for (const layer of styles) {
-		for (const style of layer.styles) {
-			enabled[style[0]] = layer.inverse ? null : style.slice(1);
-		}
-	}
-
-	let current = chalk;
-	for (const styleName of Object.keys(enabled)) {
-		if (Array.isArray(enabled[styleName])) {
-			if (!(styleName in current)) {
-				throw new Error(`Unknown Chalk style: ${styleName}`);
-			}
-
-			if (enabled[styleName].length > 0) {
-				current = current[styleName].apply(current, enabled[styleName]);
-			} else {
-				current = current[styleName];
-			}
-		}
-	}
-
-	return current;
-}
-
-module.exports = (chalk, tmp) => {
-	const styles = [];
-	const chunks = [];
-	let chunk = [];
-
-	// eslint-disable-next-line max-params
-	tmp.replace(TEMPLATE_REGEX, (m, escapeChar, inverse, style, close, chr) => {
-		if (escapeChar) {
-			chunk.push(unescape(escapeChar));
-		} else if (style) {
-			const str = chunk.join('');
-			chunk = [];
-			chunks.push(styles.length === 0 ? str : buildStyle(chalk, styles)(str));
-			styles.push({inverse, styles: parseStyle(style)});
-		} else if (close) {
-			if (styles.length === 0) {
-				throw new Error('Found extraneous } in Chalk template literal');
-			}
-
-			chunks.push(buildStyle(chalk, styles)(chunk.join('')));
-			chunk = [];
-			styles.pop();
-		} else {
-			chunk.push(chr);
-		}
-	});
-
-	chunks.push(chunk.join(''));
-
-	if (styles.length > 0) {
-		const errMsg = `Chalk template literal is missing ${styles.length} closing bracket${styles.length === 1 ? '' : 's'} (\`}\`)`;
-		throw new Error(errMsg);
-	}
-
-	return chunks.join('');
-};
-
-
-/***/ }),
-
-/***/ 15061:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-/* MIT license */
-var cssKeywords = __nccwpck_require__(1018);
-
-// NOTE: conversions should only return primitive values (i.e. arrays, or
-//       values that give correct `typeof` results).
-//       do not use box values types (i.e. Number(), String(), etc.)
-
-var reverseKeywords = {};
-for (var key in cssKeywords) {
-	if (cssKeywords.hasOwnProperty(key)) {
-		reverseKeywords[cssKeywords[key]] = key;
-	}
-}
-
-var convert = module.exports = {
-	rgb: {channels: 3, labels: 'rgb'},
-	hsl: {channels: 3, labels: 'hsl'},
-	hsv: {channels: 3, labels: 'hsv'},
-	hwb: {channels: 3, labels: 'hwb'},
-	cmyk: {channels: 4, labels: 'cmyk'},
-	xyz: {channels: 3, labels: 'xyz'},
-	lab: {channels: 3, labels: 'lab'},
-	lch: {channels: 3, labels: 'lch'},
-	hex: {channels: 1, labels: ['hex']},
-	keyword: {channels: 1, labels: ['keyword']},
-	ansi16: {channels: 1, labels: ['ansi16']},
-	ansi256: {channels: 1, labels: ['ansi256']},
-	hcg: {channels: 3, labels: ['h', 'c', 'g']},
-	apple: {channels: 3, labels: ['r16', 'g16', 'b16']},
-	gray: {channels: 1, labels: ['gray']}
-};
-
-// hide .channels and .labels properties
-for (var model in convert) {
-	if (convert.hasOwnProperty(model)) {
-		if (!('channels' in convert[model])) {
-			throw new Error('missing channels property: ' + model);
-		}
-
-		if (!('labels' in convert[model])) {
-			throw new Error('missing channel labels property: ' + model);
-		}
-
-		if (convert[model].labels.length !== convert[model].channels) {
-			throw new Error('channel and label counts mismatch: ' + model);
-		}
-
-		var channels = convert[model].channels;
-		var labels = convert[model].labels;
-		delete convert[model].channels;
-		delete convert[model].labels;
-		Object.defineProperty(convert[model], 'channels', {value: channels});
-		Object.defineProperty(convert[model], 'labels', {value: labels});
-	}
-}
-
-convert.rgb.hsl = function (rgb) {
-	var r = rgb[0] / 255;
-	var g = rgb[1] / 255;
-	var b = rgb[2] / 255;
-	var min = Math.min(r, g, b);
-	var max = Math.max(r, g, b);
-	var delta = max - min;
-	var h;
-	var s;
-	var l;
-
-	if (max === min) {
-		h = 0;
-	} else if (r === max) {
-		h = (g - b) / delta;
-	} else if (g === max) {
-		h = 2 + (b - r) / delta;
-	} else if (b === max) {
-		h = 4 + (r - g) / delta;
-	}
-
-	h = Math.min(h * 60, 360);
-
-	if (h < 0) {
-		h += 360;
-	}
-
-	l = (min + max) / 2;
-
-	if (max === min) {
-		s = 0;
-	} else if (l <= 0.5) {
-		s = delta / (max + min);
-	} else {
-		s = delta / (2 - max - min);
-	}
-
-	return [h, s * 100, l * 100];
-};
-
-convert.rgb.hsv = function (rgb) {
-	var rdif;
-	var gdif;
-	var bdif;
-	var h;
-	var s;
-
-	var r = rgb[0] / 255;
-	var g = rgb[1] / 255;
-	var b = rgb[2] / 255;
-	var v = Math.max(r, g, b);
-	var diff = v - Math.min(r, g, b);
-	var diffc = function (c) {
-		return (v - c) / 6 / diff + 1 / 2;
-	};
-
-	if (diff === 0) {
-		h = s = 0;
-	} else {
-		s = diff / v;
-		rdif = diffc(r);
-		gdif = diffc(g);
-		bdif = diffc(b);
-
-		if (r === v) {
-			h = bdif - gdif;
-		} else if (g === v) {
-			h = (1 / 3) + rdif - bdif;
-		} else if (b === v) {
-			h = (2 / 3) + gdif - rdif;
-		}
-		if (h < 0) {
-			h += 1;
-		} else if (h > 1) {
-			h -= 1;
-		}
-	}
-
-	return [
-		h * 360,
-		s * 100,
-		v * 100
-	];
-};
-
-convert.rgb.hwb = function (rgb) {
-	var r = rgb[0];
-	var g = rgb[1];
-	var b = rgb[2];
-	var h = convert.rgb.hsl(rgb)[0];
-	var w = 1 / 255 * Math.min(r, Math.min(g, b));
-
-	b = 1 - 1 / 255 * Math.max(r, Math.max(g, b));
-
-	return [h, w * 100, b * 100];
-};
-
-convert.rgb.cmyk = function (rgb) {
-	var r = rgb[0] / 255;
-	var g = rgb[1] / 255;
-	var b = rgb[2] / 255;
-	var c;
-	var m;
-	var y;
-	var k;
-
-	k = Math.min(1 - r, 1 - g, 1 - b);
-	c = (1 - r - k) / (1 - k) || 0;
-	m = (1 - g - k) / (1 - k) || 0;
-	y = (1 - b - k) / (1 - k) || 0;
-
-	return [c * 100, m * 100, y * 100, k * 100];
-};
-
-/**
- * See https://en.m.wikipedia.org/wiki/Euclidean_distance#Squared_Euclidean_distance
- * */
-function comparativeDistance(x, y) {
-	return (
-		Math.pow(x[0] - y[0], 2) +
-		Math.pow(x[1] - y[1], 2) +
-		Math.pow(x[2] - y[2], 2)
-	);
-}
-
-convert.rgb.keyword = function (rgb) {
-	var reversed = reverseKeywords[rgb];
-	if (reversed) {
-		return reversed;
-	}
-
-	var currentClosestDistance = Infinity;
-	var currentClosestKeyword;
-
-	for (var keyword in cssKeywords) {
-		if (cssKeywords.hasOwnProperty(keyword)) {
-			var value = cssKeywords[keyword];
-
-			// Compute comparative distance
-			var distance = comparativeDistance(rgb, value);
-
-			// Check if its less, if so set as closest
-			if (distance < currentClosestDistance) {
-				currentClosestDistance = distance;
-				currentClosestKeyword = keyword;
-			}
-		}
-	}
-
-	return currentClosestKeyword;
-};
-
-convert.keyword.rgb = function (keyword) {
-	return cssKeywords[keyword];
-};
-
-convert.rgb.xyz = function (rgb) {
-	var r = rgb[0] / 255;
-	var g = rgb[1] / 255;
-	var b = rgb[2] / 255;
-
-	// assume sRGB
-	r = r > 0.04045 ? Math.pow(((r + 0.055) / 1.055), 2.4) : (r / 12.92);
-	g = g > 0.04045 ? Math.pow(((g + 0.055) / 1.055), 2.4) : (g / 12.92);
-	b = b > 0.04045 ? Math.pow(((b + 0.055) / 1.055), 2.4) : (b / 12.92);
-
-	var x = (r * 0.4124) + (g * 0.3576) + (b * 0.1805);
-	var y = (r * 0.2126) + (g * 0.7152) + (b * 0.0722);
-	var z = (r * 0.0193) + (g * 0.1192) + (b * 0.9505);
-
-	return [x * 100, y * 100, z * 100];
-};
-
-convert.rgb.lab = function (rgb) {
-	var xyz = convert.rgb.xyz(rgb);
-	var x = xyz[0];
-	var y = xyz[1];
-	var z = xyz[2];
-	var l;
-	var a;
-	var b;
-
-	x /= 95.047;
-	y /= 100;
-	z /= 108.883;
-
-	x = x > 0.008856 ? Math.pow(x, 1 / 3) : (7.787 * x) + (16 / 116);
-	y = y > 0.008856 ? Math.pow(y, 1 / 3) : (7.787 * y) + (16 / 116);
-	z = z > 0.008856 ? Math.pow(z, 1 / 3) : (7.787 * z) + (16 / 116);
-
-	l = (116 * y) - 16;
-	a = 500 * (x - y);
-	b = 200 * (y - z);
-
-	return [l, a, b];
-};
-
-convert.hsl.rgb = function (hsl) {
-	var h = hsl[0] / 360;
-	var s = hsl[1] / 100;
-	var l = hsl[2] / 100;
-	var t1;
-	var t2;
-	var t3;
-	var rgb;
-	var val;
-
-	if (s === 0) {
-		val = l * 255;
-		return [val, val, val];
-	}
-
-	if (l < 0.5) {
-		t2 = l * (1 + s);
-	} else {
-		t2 = l + s - l * s;
-	}
-
-	t1 = 2 * l - t2;
-
-	rgb = [0, 0, 0];
-	for (var i = 0; i < 3; i++) {
-		t3 = h + 1 / 3 * -(i - 1);
-		if (t3 < 0) {
-			t3++;
-		}
-		if (t3 > 1) {
-			t3--;
-		}
-
-		if (6 * t3 < 1) {
-			val = t1 + (t2 - t1) * 6 * t3;
-		} else if (2 * t3 < 1) {
-			val = t2;
-		} else if (3 * t3 < 2) {
-			val = t1 + (t2 - t1) * (2 / 3 - t3) * 6;
-		} else {
-			val = t1;
-		}
-
-		rgb[i] = val * 255;
-	}
-
-	return rgb;
-};
-
-convert.hsl.hsv = function (hsl) {
-	var h = hsl[0];
-	var s = hsl[1] / 100;
-	var l = hsl[2] / 100;
-	var smin = s;
-	var lmin = Math.max(l, 0.01);
-	var sv;
-	var v;
-
-	l *= 2;
-	s *= (l <= 1) ? l : 2 - l;
-	smin *= lmin <= 1 ? lmin : 2 - lmin;
-	v = (l + s) / 2;
-	sv = l === 0 ? (2 * smin) / (lmin + smin) : (2 * s) / (l + s);
-
-	return [h, sv * 100, v * 100];
-};
-
-convert.hsv.rgb = function (hsv) {
-	var h = hsv[0] / 60;
-	var s = hsv[1] / 100;
-	var v = hsv[2] / 100;
-	var hi = Math.floor(h) % 6;
-
-	var f = h - Math.floor(h);
-	var p = 255 * v * (1 - s);
-	var q = 255 * v * (1 - (s * f));
-	var t = 255 * v * (1 - (s * (1 - f)));
-	v *= 255;
-
-	switch (hi) {
-		case 0:
-			return [v, t, p];
-		case 1:
-			return [q, v, p];
-		case 2:
-			return [p, v, t];
-		case 3:
-			return [p, q, v];
-		case 4:
-			return [t, p, v];
-		case 5:
-			return [v, p, q];
-	}
-};
-
-convert.hsv.hsl = function (hsv) {
-	var h = hsv[0];
-	var s = hsv[1] / 100;
-	var v = hsv[2] / 100;
-	var vmin = Math.max(v, 0.01);
-	var lmin;
-	var sl;
-	var l;
-
-	l = (2 - s) * v;
-	lmin = (2 - s) * vmin;
-	sl = s * vmin;
-	sl /= (lmin <= 1) ? lmin : 2 - lmin;
-	sl = sl || 0;
-	l /= 2;
-
-	return [h, sl * 100, l * 100];
-};
-
-// http://dev.w3.org/csswg/css-color/#hwb-to-rgb
-convert.hwb.rgb = function (hwb) {
-	var h = hwb[0] / 360;
-	var wh = hwb[1] / 100;
-	var bl = hwb[2] / 100;
-	var ratio = wh + bl;
-	var i;
-	var v;
-	var f;
-	var n;
-
-	// wh + bl cant be > 1
-	if (ratio > 1) {
-		wh /= ratio;
-		bl /= ratio;
-	}
-
-	i = Math.floor(6 * h);
-	v = 1 - bl;
-	f = 6 * h - i;
-
-	if ((i & 0x01) !== 0) {
-		f = 1 - f;
-	}
-
-	n = wh + f * (v - wh); // linear interpolation
-
-	var r;
-	var g;
-	var b;
-	switch (i) {
-		default:
-		case 6:
-		case 0: r = v; g = n; b = wh; break;
-		case 1: r = n; g = v; b = wh; break;
-		case 2: r = wh; g = v; b = n; break;
-		case 3: r = wh; g = n; b = v; break;
-		case 4: r = n; g = wh; b = v; break;
-		case 5: r = v; g = wh; b = n; break;
-	}
-
-	return [r * 255, g * 255, b * 255];
-};
-
-convert.cmyk.rgb = function (cmyk) {
-	var c = cmyk[0] / 100;
-	var m = cmyk[1] / 100;
-	var y = cmyk[2] / 100;
-	var k = cmyk[3] / 100;
-	var r;
-	var g;
-	var b;
-
-	r = 1 - Math.min(1, c * (1 - k) + k);
-	g = 1 - Math.min(1, m * (1 - k) + k);
-	b = 1 - Math.min(1, y * (1 - k) + k);
-
-	return [r * 255, g * 255, b * 255];
-};
-
-convert.xyz.rgb = function (xyz) {
-	var x = xyz[0] / 100;
-	var y = xyz[1] / 100;
-	var z = xyz[2] / 100;
-	var r;
-	var g;
-	var b;
-
-	r = (x * 3.2406) + (y * -1.5372) + (z * -0.4986);
-	g = (x * -0.9689) + (y * 1.8758) + (z * 0.0415);
-	b = (x * 0.0557) + (y * -0.2040) + (z * 1.0570);
-
-	// assume sRGB
-	r = r > 0.0031308
-		? ((1.055 * Math.pow(r, 1.0 / 2.4)) - 0.055)
-		: r * 12.92;
-
-	g = g > 0.0031308
-		? ((1.055 * Math.pow(g, 1.0 / 2.4)) - 0.055)
-		: g * 12.92;
-
-	b = b > 0.0031308
-		? ((1.055 * Math.pow(b, 1.0 / 2.4)) - 0.055)
-		: b * 12.92;
-
-	r = Math.min(Math.max(0, r), 1);
-	g = Math.min(Math.max(0, g), 1);
-	b = Math.min(Math.max(0, b), 1);
-
-	return [r * 255, g * 255, b * 255];
-};
-
-convert.xyz.lab = function (xyz) {
-	var x = xyz[0];
-	var y = xyz[1];
-	var z = xyz[2];
-	var l;
-	var a;
-	var b;
-
-	x /= 95.047;
-	y /= 100;
-	z /= 108.883;
-
-	x = x > 0.008856 ? Math.pow(x, 1 / 3) : (7.787 * x) + (16 / 116);
-	y = y > 0.008856 ? Math.pow(y, 1 / 3) : (7.787 * y) + (16 / 116);
-	z = z > 0.008856 ? Math.pow(z, 1 / 3) : (7.787 * z) + (16 / 116);
-
-	l = (116 * y) - 16;
-	a = 500 * (x - y);
-	b = 200 * (y - z);
-
-	return [l, a, b];
-};
-
-convert.lab.xyz = function (lab) {
-	var l = lab[0];
-	var a = lab[1];
-	var b = lab[2];
-	var x;
-	var y;
-	var z;
-
-	y = (l + 16) / 116;
-	x = a / 500 + y;
-	z = y - b / 200;
-
-	var y2 = Math.pow(y, 3);
-	var x2 = Math.pow(x, 3);
-	var z2 = Math.pow(z, 3);
-	y = y2 > 0.008856 ? y2 : (y - 16 / 116) / 7.787;
-	x = x2 > 0.008856 ? x2 : (x - 16 / 116) / 7.787;
-	z = z2 > 0.008856 ? z2 : (z - 16 / 116) / 7.787;
-
-	x *= 95.047;
-	y *= 100;
-	z *= 108.883;
-
-	return [x, y, z];
-};
-
-convert.lab.lch = function (lab) {
-	var l = lab[0];
-	var a = lab[1];
-	var b = lab[2];
-	var hr;
-	var h;
-	var c;
-
-	hr = Math.atan2(b, a);
-	h = hr * 360 / 2 / Math.PI;
-
-	if (h < 0) {
-		h += 360;
-	}
-
-	c = Math.sqrt(a * a + b * b);
-
-	return [l, c, h];
-};
-
-convert.lch.lab = function (lch) {
-	var l = lch[0];
-	var c = lch[1];
-	var h = lch[2];
-	var a;
-	var b;
-	var hr;
-
-	hr = h / 360 * 2 * Math.PI;
-	a = c * Math.cos(hr);
-	b = c * Math.sin(hr);
-
-	return [l, a, b];
-};
-
-convert.rgb.ansi16 = function (args) {
-	var r = args[0];
-	var g = args[1];
-	var b = args[2];
-	var value = 1 in arguments ? arguments[1] : convert.rgb.hsv(args)[2]; // hsv -> ansi16 optimization
-
-	value = Math.round(value / 50);
-
-	if (value === 0) {
-		return 30;
-	}
-
-	var ansi = 30
-		+ ((Math.round(b / 255) << 2)
-		| (Math.round(g / 255) << 1)
-		| Math.round(r / 255));
-
-	if (value === 2) {
-		ansi += 60;
-	}
-
-	return ansi;
-};
-
-convert.hsv.ansi16 = function (args) {
-	// optimization here; we already know the value and don't need to get
-	// it converted for us.
-	return convert.rgb.ansi16(convert.hsv.rgb(args), args[2]);
-};
-
-convert.rgb.ansi256 = function (args) {
-	var r = args[0];
-	var g = args[1];
-	var b = args[2];
-
-	// we use the extended greyscale palette here, with the exception of
-	// black and white. normal palette only has 4 greyscale shades.
-	if (r === g && g === b) {
-		if (r < 8) {
-			return 16;
-		}
-
-		if (r > 248) {
-			return 231;
-		}
-
-		return Math.round(((r - 8) / 247) * 24) + 232;
-	}
-
-	var ansi = 16
-		+ (36 * Math.round(r / 255 * 5))
-		+ (6 * Math.round(g / 255 * 5))
-		+ Math.round(b / 255 * 5);
-
-	return ansi;
-};
-
-convert.ansi16.rgb = function (args) {
-	var color = args % 10;
-
-	// handle greyscale
-	if (color === 0 || color === 7) {
-		if (args > 50) {
-			color += 3.5;
-		}
-
-		color = color / 10.5 * 255;
-
-		return [color, color, color];
-	}
-
-	var mult = (~~(args > 50) + 1) * 0.5;
-	var r = ((color & 1) * mult) * 255;
-	var g = (((color >> 1) & 1) * mult) * 255;
-	var b = (((color >> 2) & 1) * mult) * 255;
-
-	return [r, g, b];
-};
-
-convert.ansi256.rgb = function (args) {
-	// handle greyscale
-	if (args >= 232) {
-		var c = (args - 232) * 10 + 8;
-		return [c, c, c];
-	}
-
-	args -= 16;
-
-	var rem;
-	var r = Math.floor(args / 36) / 5 * 255;
-	var g = Math.floor((rem = args % 36) / 6) / 5 * 255;
-	var b = (rem % 6) / 5 * 255;
-
-	return [r, g, b];
-};
-
-convert.rgb.hex = function (args) {
-	var integer = ((Math.round(args[0]) & 0xFF) << 16)
-		+ ((Math.round(args[1]) & 0xFF) << 8)
-		+ (Math.round(args[2]) & 0xFF);
-
-	var string = integer.toString(16).toUpperCase();
-	return '000000'.substring(string.length) + string;
-};
-
-convert.hex.rgb = function (args) {
-	var match = args.toString(16).match(/[a-f0-9]{6}|[a-f0-9]{3}/i);
-	if (!match) {
-		return [0, 0, 0];
-	}
-
-	var colorString = match[0];
-
-	if (match[0].length === 3) {
-		colorString = colorString.split('').map(function (char) {
-			return char + char;
-		}).join('');
-	}
-
-	var integer = parseInt(colorString, 16);
-	var r = (integer >> 16) & 0xFF;
-	var g = (integer >> 8) & 0xFF;
-	var b = integer & 0xFF;
-
-	return [r, g, b];
-};
-
-convert.rgb.hcg = function (rgb) {
-	var r = rgb[0] / 255;
-	var g = rgb[1] / 255;
-	var b = rgb[2] / 255;
-	var max = Math.max(Math.max(r, g), b);
-	var min = Math.min(Math.min(r, g), b);
-	var chroma = (max - min);
-	var grayscale;
-	var hue;
-
-	if (chroma < 1) {
-		grayscale = min / (1 - chroma);
-	} else {
-		grayscale = 0;
-	}
-
-	if (chroma <= 0) {
-		hue = 0;
-	} else
-	if (max === r) {
-		hue = ((g - b) / chroma) % 6;
-	} else
-	if (max === g) {
-		hue = 2 + (b - r) / chroma;
-	} else {
-		hue = 4 + (r - g) / chroma + 4;
-	}
-
-	hue /= 6;
-	hue %= 1;
-
-	return [hue * 360, chroma * 100, grayscale * 100];
-};
-
-convert.hsl.hcg = function (hsl) {
-	var s = hsl[1] / 100;
-	var l = hsl[2] / 100;
-	var c = 1;
-	var f = 0;
-
-	if (l < 0.5) {
-		c = 2.0 * s * l;
-	} else {
-		c = 2.0 * s * (1.0 - l);
-	}
-
-	if (c < 1.0) {
-		f = (l - 0.5 * c) / (1.0 - c);
-	}
-
-	return [hsl[0], c * 100, f * 100];
-};
-
-convert.hsv.hcg = function (hsv) {
-	var s = hsv[1] / 100;
-	var v = hsv[2] / 100;
-
-	var c = s * v;
-	var f = 0;
-
-	if (c < 1.0) {
-		f = (v - c) / (1 - c);
-	}
-
-	return [hsv[0], c * 100, f * 100];
-};
-
-convert.hcg.rgb = function (hcg) {
-	var h = hcg[0] / 360;
-	var c = hcg[1] / 100;
-	var g = hcg[2] / 100;
-
-	if (c === 0.0) {
-		return [g * 255, g * 255, g * 255];
-	}
-
-	var pure = [0, 0, 0];
-	var hi = (h % 1) * 6;
-	var v = hi % 1;
-	var w = 1 - v;
-	var mg = 0;
-
-	switch (Math.floor(hi)) {
-		case 0:
-			pure[0] = 1; pure[1] = v; pure[2] = 0; break;
-		case 1:
-			pure[0] = w; pure[1] = 1; pure[2] = 0; break;
-		case 2:
-			pure[0] = 0; pure[1] = 1; pure[2] = v; break;
-		case 3:
-			pure[0] = 0; pure[1] = w; pure[2] = 1; break;
-		case 4:
-			pure[0] = v; pure[1] = 0; pure[2] = 1; break;
-		default:
-			pure[0] = 1; pure[1] = 0; pure[2] = w;
-	}
-
-	mg = (1.0 - c) * g;
-
-	return [
-		(c * pure[0] + mg) * 255,
-		(c * pure[1] + mg) * 255,
-		(c * pure[2] + mg) * 255
-	];
-};
-
-convert.hcg.hsv = function (hcg) {
-	var c = hcg[1] / 100;
-	var g = hcg[2] / 100;
-
-	var v = c + g * (1.0 - c);
-	var f = 0;
-
-	if (v > 0.0) {
-		f = c / v;
-	}
-
-	return [hcg[0], f * 100, v * 100];
-};
-
-convert.hcg.hsl = function (hcg) {
-	var c = hcg[1] / 100;
-	var g = hcg[2] / 100;
-
-	var l = g * (1.0 - c) + 0.5 * c;
-	var s = 0;
-
-	if (l > 0.0 && l < 0.5) {
-		s = c / (2 * l);
-	} else
-	if (l >= 0.5 && l < 1.0) {
-		s = c / (2 * (1 - l));
-	}
-
-	return [hcg[0], s * 100, l * 100];
-};
-
-convert.hcg.hwb = function (hcg) {
-	var c = hcg[1] / 100;
-	var g = hcg[2] / 100;
-	var v = c + g * (1.0 - c);
-	return [hcg[0], (v - c) * 100, (1 - v) * 100];
-};
-
-convert.hwb.hcg = function (hwb) {
-	var w = hwb[1] / 100;
-	var b = hwb[2] / 100;
-	var v = 1 - b;
-	var c = v - w;
-	var g = 0;
-
-	if (c < 1) {
-		g = (v - c) / (1 - c);
-	}
-
-	return [hwb[0], c * 100, g * 100];
-};
-
-convert.apple.rgb = function (apple) {
-	return [(apple[0] / 65535) * 255, (apple[1] / 65535) * 255, (apple[2] / 65535) * 255];
-};
-
-convert.rgb.apple = function (rgb) {
-	return [(rgb[0] / 255) * 65535, (rgb[1] / 255) * 65535, (rgb[2] / 255) * 65535];
-};
-
-convert.gray.rgb = function (args) {
-	return [args[0] / 100 * 255, args[0] / 100 * 255, args[0] / 100 * 255];
-};
-
-convert.gray.hsl = convert.gray.hsv = function (args) {
-	return [0, 0, args[0]];
-};
-
-convert.gray.hwb = function (gray) {
-	return [0, 100, gray[0]];
-};
-
-convert.gray.cmyk = function (gray) {
-	return [0, 0, 0, gray[0]];
-};
-
-convert.gray.lab = function (gray) {
-	return [gray[0], 0, 0];
-};
-
-convert.gray.hex = function (gray) {
-	var val = Math.round(gray[0] / 100 * 255) & 0xFF;
-	var integer = (val << 16) + (val << 8) + val;
-
-	var string = integer.toString(16).toUpperCase();
-	return '000000'.substring(string.length) + string;
-};
-
-convert.rgb.gray = function (rgb) {
-	var val = (rgb[0] + rgb[1] + rgb[2]) / 3;
-	return [val / 255 * 100];
-};
-
-
-/***/ }),
-
-/***/ 744:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-var conversions = __nccwpck_require__(15061);
-var route = __nccwpck_require__(80905);
-
-var convert = {};
-
-var models = Object.keys(conversions);
-
-function wrapRaw(fn) {
-	var wrappedFn = function (args) {
-		if (args === undefined || args === null) {
-			return args;
-		}
-
-		if (arguments.length > 1) {
-			args = Array.prototype.slice.call(arguments);
-		}
-
-		return fn(args);
-	};
-
-	// preserve .conversion property if there is one
-	if ('conversion' in fn) {
-		wrappedFn.conversion = fn.conversion;
-	}
-
-	return wrappedFn;
-}
-
-function wrapRounded(fn) {
-	var wrappedFn = function (args) {
-		if (args === undefined || args === null) {
-			return args;
-		}
-
-		if (arguments.length > 1) {
-			args = Array.prototype.slice.call(arguments);
-		}
-
-		var result = fn(args);
-
-		// we're assuming the result is an array here.
-		// see notice in conversions.js; don't use box types
-		// in conversion functions.
-		if (typeof result === 'object') {
-			for (var len = result.length, i = 0; i < len; i++) {
-				result[i] = Math.round(result[i]);
-			}
-		}
-
-		return result;
-	};
-
-	// preserve .conversion property if there is one
-	if ('conversion' in fn) {
-		wrappedFn.conversion = fn.conversion;
-	}
-
-	return wrappedFn;
-}
-
-models.forEach(function (fromModel) {
-	convert[fromModel] = {};
-
-	Object.defineProperty(convert[fromModel], 'channels', {value: conversions[fromModel].channels});
-	Object.defineProperty(convert[fromModel], 'labels', {value: conversions[fromModel].labels});
-
-	var routes = route(fromModel);
-	var routeModels = Object.keys(routes);
-
-	routeModels.forEach(function (toModel) {
-		var fn = routes[toModel];
-
-		convert[fromModel][toModel] = wrapRounded(fn);
-		convert[fromModel][toModel].raw = wrapRaw(fn);
-	});
-});
-
-module.exports = convert;
-
-
-/***/ }),
-
-/***/ 80905:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-var conversions = __nccwpck_require__(15061);
-
-/*
-	this function routes a model to all other models.
-
-	all functions that are routed have a property `.conversion` attached
-	to the returned synthetic function. This property is an array
-	of strings, each with the steps in between the 'from' and 'to'
-	color models (inclusive).
-
-	conversions that are not possible simply are not included.
-*/
-
-function buildGraph() {
-	var graph = {};
-	// https://jsperf.com/object-keys-vs-for-in-with-closure/3
-	var models = Object.keys(conversions);
-
-	for (var len = models.length, i = 0; i < len; i++) {
-		graph[models[i]] = {
-			// http://jsperf.com/1-vs-infinity
-			// micro-opt, but this is simple.
-			distance: -1,
-			parent: null
-		};
-	}
-
-	return graph;
-}
-
-// https://en.wikipedia.org/wiki/Breadth-first_search
-function deriveBFS(fromModel) {
-	var graph = buildGraph();
-	var queue = [fromModel]; // unshift -> queue -> pop
-
-	graph[fromModel].distance = 0;
-
-	while (queue.length) {
-		var current = queue.pop();
-		var adjacents = Object.keys(conversions[current]);
-
-		for (var len = adjacents.length, i = 0; i < len; i++) {
-			var adjacent = adjacents[i];
-			var node = graph[adjacent];
-
-			if (node.distance === -1) {
-				node.distance = graph[current].distance + 1;
-				node.parent = current;
-				queue.unshift(adjacent);
-			}
-		}
-	}
-
-	return graph;
-}
-
-function link(from, to) {
-	return function (args) {
-		return to(from(args));
-	};
-}
-
-function wrapConversion(toModel, graph) {
-	var path = [graph[toModel].parent, toModel];
-	var fn = conversions[graph[toModel].parent][toModel];
-
-	var cur = graph[toModel].parent;
-	while (graph[cur].parent) {
-		path.unshift(graph[cur].parent);
-		fn = link(conversions[graph[cur].parent][cur], fn);
-		cur = graph[cur].parent;
-	}
-
-	fn.conversion = path;
-	return fn;
-}
-
-module.exports = function (fromModel) {
-	var graph = deriveBFS(fromModel);
-	var conversion = {};
-
-	var models = Object.keys(graph);
-	for (var len = models.length, i = 0; i < len; i++) {
-		var toModel = models[i];
-		var node = graph[toModel];
-
-		if (node.parent === null) {
-			// no possible conversion, or this node is the source model.
-			continue;
-		}
-
-		conversion[toModel] = wrapConversion(toModel, graph);
-	}
-
-	return conversion;
-};
-
-
-
-/***/ }),
-
-/***/ 1018:
-/***/ ((module) => {
-
-"use strict";
-
-
-module.exports = {
-	"aliceblue": [240, 248, 255],
-	"antiquewhite": [250, 235, 215],
-	"aqua": [0, 255, 255],
-	"aquamarine": [127, 255, 212],
-	"azure": [240, 255, 255],
-	"beige": [245, 245, 220],
-	"bisque": [255, 228, 196],
-	"black": [0, 0, 0],
-	"blanchedalmond": [255, 235, 205],
-	"blue": [0, 0, 255],
-	"blueviolet": [138, 43, 226],
-	"brown": [165, 42, 42],
-	"burlywood": [222, 184, 135],
-	"cadetblue": [95, 158, 160],
-	"chartreuse": [127, 255, 0],
-	"chocolate": [210, 105, 30],
-	"coral": [255, 127, 80],
-	"cornflowerblue": [100, 149, 237],
-	"cornsilk": [255, 248, 220],
-	"crimson": [220, 20, 60],
-	"cyan": [0, 255, 255],
-	"darkblue": [0, 0, 139],
-	"darkcyan": [0, 139, 139],
-	"darkgoldenrod": [184, 134, 11],
-	"darkgray": [169, 169, 169],
-	"darkgreen": [0, 100, 0],
-	"darkgrey": [169, 169, 169],
-	"darkkhaki": [189, 183, 107],
-	"darkmagenta": [139, 0, 139],
-	"darkolivegreen": [85, 107, 47],
-	"darkorange": [255, 140, 0],
-	"darkorchid": [153, 50, 204],
-	"darkred": [139, 0, 0],
-	"darksalmon": [233, 150, 122],
-	"darkseagreen": [143, 188, 143],
-	"darkslateblue": [72, 61, 139],
-	"darkslategray": [47, 79, 79],
-	"darkslategrey": [47, 79, 79],
-	"darkturquoise": [0, 206, 209],
-	"darkviolet": [148, 0, 211],
-	"deeppink": [255, 20, 147],
-	"deepskyblue": [0, 191, 255],
-	"dimgray": [105, 105, 105],
-	"dimgrey": [105, 105, 105],
-	"dodgerblue": [30, 144, 255],
-	"firebrick": [178, 34, 34],
-	"floralwhite": [255, 250, 240],
-	"forestgreen": [34, 139, 34],
-	"fuchsia": [255, 0, 255],
-	"gainsboro": [220, 220, 220],
-	"ghostwhite": [248, 248, 255],
-	"gold": [255, 215, 0],
-	"goldenrod": [218, 165, 32],
-	"gray": [128, 128, 128],
-	"green": [0, 128, 0],
-	"greenyellow": [173, 255, 47],
-	"grey": [128, 128, 128],
-	"honeydew": [240, 255, 240],
-	"hotpink": [255, 105, 180],
-	"indianred": [205, 92, 92],
-	"indigo": [75, 0, 130],
-	"ivory": [255, 255, 240],
-	"khaki": [240, 230, 140],
-	"lavender": [230, 230, 250],
-	"lavenderblush": [255, 240, 245],
-	"lawngreen": [124, 252, 0],
-	"lemonchiffon": [255, 250, 205],
-	"lightblue": [173, 216, 230],
-	"lightcoral": [240, 128, 128],
-	"lightcyan": [224, 255, 255],
-	"lightgoldenrodyellow": [250, 250, 210],
-	"lightgray": [211, 211, 211],
-	"lightgreen": [144, 238, 144],
-	"lightgrey": [211, 211, 211],
-	"lightpink": [255, 182, 193],
-	"lightsalmon": [255, 160, 122],
-	"lightseagreen": [32, 178, 170],
-	"lightskyblue": [135, 206, 250],
-	"lightslategray": [119, 136, 153],
-	"lightslategrey": [119, 136, 153],
-	"lightsteelblue": [176, 196, 222],
-	"lightyellow": [255, 255, 224],
-	"lime": [0, 255, 0],
-	"limegreen": [50, 205, 50],
-	"linen": [250, 240, 230],
-	"magenta": [255, 0, 255],
-	"maroon": [128, 0, 0],
-	"mediumaquamarine": [102, 205, 170],
-	"mediumblue": [0, 0, 205],
-	"mediumorchid": [186, 85, 211],
-	"mediumpurple": [147, 112, 219],
-	"mediumseagreen": [60, 179, 113],
-	"mediumslateblue": [123, 104, 238],
-	"mediumspringgreen": [0, 250, 154],
-	"mediumturquoise": [72, 209, 204],
-	"mediumvioletred": [199, 21, 133],
-	"midnightblue": [25, 25, 112],
-	"mintcream": [245, 255, 250],
-	"mistyrose": [255, 228, 225],
-	"moccasin": [255, 228, 181],
-	"navajowhite": [255, 222, 173],
-	"navy": [0, 0, 128],
-	"oldlace": [253, 245, 230],
-	"olive": [128, 128, 0],
-	"olivedrab": [107, 142, 35],
-	"orange": [255, 165, 0],
-	"orangered": [255, 69, 0],
-	"orchid": [218, 112, 214],
-	"palegoldenrod": [238, 232, 170],
-	"palegreen": [152, 251, 152],
-	"paleturquoise": [175, 238, 238],
-	"palevioletred": [219, 112, 147],
-	"papayawhip": [255, 239, 213],
-	"peachpuff": [255, 218, 185],
-	"peru": [205, 133, 63],
-	"pink": [255, 192, 203],
-	"plum": [221, 160, 221],
-	"powderblue": [176, 224, 230],
-	"purple": [128, 0, 128],
-	"rebeccapurple": [102, 51, 153],
-	"red": [255, 0, 0],
-	"rosybrown": [188, 143, 143],
-	"royalblue": [65, 105, 225],
-	"saddlebrown": [139, 69, 19],
-	"salmon": [250, 128, 114],
-	"sandybrown": [244, 164, 96],
-	"seagreen": [46, 139, 87],
-	"seashell": [255, 245, 238],
-	"sienna": [160, 82, 45],
-	"silver": [192, 192, 192],
-	"skyblue": [135, 206, 235],
-	"slateblue": [106, 90, 205],
-	"slategray": [112, 128, 144],
-	"slategrey": [112, 128, 144],
-	"snow": [255, 250, 250],
-	"springgreen": [0, 255, 127],
-	"steelblue": [70, 130, 180],
-	"tan": [210, 180, 140],
-	"teal": [0, 128, 128],
-	"thistle": [216, 191, 216],
-	"tomato": [255, 99, 71],
-	"turquoise": [64, 224, 208],
-	"violet": [238, 130, 238],
-	"wheat": [245, 222, 179],
-	"white": [255, 255, 255],
-	"whitesmoke": [245, 245, 245],
-	"yellow": [255, 255, 0],
-	"yellowgreen": [154, 205, 50]
-};
-
-
-/***/ }),
-
-/***/ 15684:
-/***/ ((module) => {
-
-"use strict";
-
-
-var matchOperatorsRe = /[|\\{}()[\]^$+*?.]/g;
-
-module.exports = function (str) {
-	if (typeof str !== 'string') {
-		throw new TypeError('Expected a string');
-	}
-
-	return str.replace(matchOperatorsRe, '\\$&');
-};
-
-
-/***/ }),
-
-/***/ 3498:
-/***/ ((module) => {
-
-"use strict";
-
-module.exports = (flag, argv) => {
-	argv = argv || process.argv;
-	const prefix = flag.startsWith('-') ? '' : (flag.length === 1 ? '-' : '--');
-	const pos = argv.indexOf(prefix + flag);
-	const terminatorPos = argv.indexOf('--');
-	return pos !== -1 && (terminatorPos === -1 ? true : pos < terminatorPos);
-};
-
-
-/***/ }),
-
-/***/ 85809:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-const os = __nccwpck_require__(70857);
-const hasFlag = __nccwpck_require__(3498);
-
-const env = process.env;
-
-let forceColor;
-if (hasFlag('no-color') ||
-	hasFlag('no-colors') ||
-	hasFlag('color=false')) {
-	forceColor = false;
-} else if (hasFlag('color') ||
-	hasFlag('colors') ||
-	hasFlag('color=true') ||
-	hasFlag('color=always')) {
-	forceColor = true;
-}
-if ('FORCE_COLOR' in env) {
-	forceColor = env.FORCE_COLOR.length === 0 || parseInt(env.FORCE_COLOR, 10) !== 0;
-}
-
-function translateLevel(level) {
-	if (level === 0) {
-		return false;
-	}
-
-	return {
-		level,
-		hasBasic: true,
-		has256: level >= 2,
-		has16m: level >= 3
-	};
-}
-
-function supportsColor(stream) {
-	if (forceColor === false) {
-		return 0;
-	}
-
-	if (hasFlag('color=16m') ||
-		hasFlag('color=full') ||
-		hasFlag('color=truecolor')) {
-		return 3;
-	}
-
-	if (hasFlag('color=256')) {
-		return 2;
-	}
-
-	if (stream && !stream.isTTY && forceColor !== true) {
-		return 0;
-	}
-
-	const min = forceColor ? 1 : 0;
-
-	if (process.platform === 'win32') {
-		// Node.js 7.5.0 is the first version of Node.js to include a patch to
-		// libuv that enables 256 color output on Windows. Anything earlier and it
-		// won't work. However, here we target Node.js 8 at minimum as it is an LTS
-		// release, and Node.js 7 is not. Windows 10 build 10586 is the first Windows
-		// release that supports 256 colors. Windows 10 build 14931 is the first release
-		// that supports 16m/TrueColor.
-		const osRelease = os.release().split('.');
-		if (
-			Number(process.versions.node.split('.')[0]) >= 8 &&
-			Number(osRelease[0]) >= 10 &&
-			Number(osRelease[2]) >= 10586
-		) {
-			return Number(osRelease[2]) >= 14931 ? 3 : 2;
-		}
-
-		return 1;
-	}
-
-	if ('CI' in env) {
-		if (['TRAVIS', 'CIRCLECI', 'APPVEYOR', 'GITLAB_CI'].some(sign => sign in env) || env.CI_NAME === 'codeship') {
-			return 1;
-		}
-
-		return min;
-	}
-
-	if ('TEAMCITY_VERSION' in env) {
-		return /^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.test(env.TEAMCITY_VERSION) ? 1 : 0;
-	}
-
-	if (env.COLORTERM === 'truecolor') {
-		return 3;
-	}
-
-	if ('TERM_PROGRAM' in env) {
-		const version = parseInt((env.TERM_PROGRAM_VERSION || '').split('.')[0], 10);
-
-		switch (env.TERM_PROGRAM) {
-			case 'iTerm.app':
-				return version >= 3 ? 3 : 2;
-			case 'Apple_Terminal':
-				return 2;
-			// No default
-		}
-	}
-
-	if (/-256(color)?$/i.test(env.TERM)) {
-		return 2;
-	}
-
-	if (/^screen|^xterm|^vt100|^vt220|^rxvt|color|ansi|cygwin|linux/i.test(env.TERM)) {
-		return 1;
-	}
-
-	if ('COLORTERM' in env) {
-		return 1;
-	}
-
-	if (env.TERM === 'dumb') {
-		return min;
-	}
-
-	return min;
-}
-
-function getSupportLevel(stream) {
-	const level = supportsColor(stream);
-	return translateLevel(level);
-}
-
-module.exports = {
-	supportsColor: getSupportLevel,
-	stdout: getSupportLevel(process.stdout),
-	stderr: getSupportLevel(process.stderr)
-};
-
-
-/***/ }),
-
 /***/ 75926:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -5325,9 +3381,7 @@ class Agent extends http.Agent {
     // In order to properly update the socket pool, we need to call `getName()` on
     // the core `https.Agent` if it is a secureEndpoint.
     getName(options) {
-        const secureEndpoint = typeof options.secureEndpoint === 'boolean'
-            ? options.secureEndpoint
-            : this.isSecureEndpoint(options);
+        const secureEndpoint = this.isSecureEndpoint(options);
         if (secureEndpoint) {
             // @ts-expect-error `getName()` isn't defined in `@types/node`
             return https_1.Agent.prototype.getName.call(this, options);
@@ -5347,8 +3401,13 @@ class Agent extends http.Agent {
             .then((socket) => {
             this.decrementSockets(name, fakeSocket);
             if (socket instanceof http.Agent) {
-                // @ts-expect-error `addRequest()` isn't defined in `@types/node`
-                return socket.addRequest(req, connectOpts);
+                try {
+                    // @ts-expect-error `addRequest()` isn't defined in `@types/node`
+                    return socket.addRequest(req, connectOpts);
+                }
+                catch (err) {
+                    return cb(err);
+                }
             }
             this[INTERNAL].currentSocket = socket;
             // @ts-expect-error `createSocket()` isn't defined in `@types/node`
@@ -9940,121 +7999,153 @@ Object.assign(namedTypes_1.namedTypes, n);
 /***/ 73057:
 /***/ ((module) => {
 
-function isBuffer (value) {
+function isBuffer(value) {
   return Buffer.isBuffer(value) || value instanceof Uint8Array
 }
 
-function isEncoding (encoding) {
+function isEncoding(encoding) {
   return Buffer.isEncoding(encoding)
 }
 
-function alloc (size, fill, encoding) {
+function alloc(size, fill, encoding) {
   return Buffer.alloc(size, fill, encoding)
 }
 
-function allocUnsafe (size) {
+function allocUnsafe(size) {
   return Buffer.allocUnsafe(size)
 }
 
-function allocUnsafeSlow (size) {
+function allocUnsafeSlow(size) {
   return Buffer.allocUnsafeSlow(size)
 }
 
-function byteLength (string, encoding) {
+function byteLength(string, encoding) {
   return Buffer.byteLength(string, encoding)
 }
 
-function compare (a, b) {
+function compare(a, b) {
   return Buffer.compare(a, b)
 }
 
-function concat (buffers, totalLength) {
+function concat(buffers, totalLength) {
   return Buffer.concat(buffers, totalLength)
 }
 
-function copy (source, target, targetStart, start, end) {
+function copy(source, target, targetStart, start, end) {
   return toBuffer(source).copy(target, targetStart, start, end)
 }
 
-function equals (a, b) {
+function equals(a, b) {
   return toBuffer(a).equals(b)
 }
 
-function fill (buffer, value, offset, end, encoding) {
+function fill(buffer, value, offset, end, encoding) {
   return toBuffer(buffer).fill(value, offset, end, encoding)
 }
 
-function from (value, encodingOrOffset, length) {
+function from(value, encodingOrOffset, length) {
   return Buffer.from(value, encodingOrOffset, length)
 }
 
-function includes (buffer, value, byteOffset, encoding) {
+function includes(buffer, value, byteOffset, encoding) {
   return toBuffer(buffer).includes(value, byteOffset, encoding)
 }
 
-function indexOf (buffer, value, byfeOffset, encoding) {
+function indexOf(buffer, value, byfeOffset, encoding) {
   return toBuffer(buffer).indexOf(value, byfeOffset, encoding)
 }
 
-function lastIndexOf (buffer, value, byteOffset, encoding) {
+function lastIndexOf(buffer, value, byteOffset, encoding) {
   return toBuffer(buffer).lastIndexOf(value, byteOffset, encoding)
 }
 
-function swap16 (buffer) {
+function swap16(buffer) {
   return toBuffer(buffer).swap16()
 }
 
-function swap32 (buffer) {
+function swap32(buffer) {
   return toBuffer(buffer).swap32()
 }
 
-function swap64 (buffer) {
+function swap64(buffer) {
   return toBuffer(buffer).swap64()
 }
 
-function toBuffer (buffer) {
+function toBuffer(buffer) {
   if (Buffer.isBuffer(buffer)) return buffer
   return Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength)
 }
 
-function toString (buffer, encoding, start, end) {
+function toString(buffer, encoding, start, end) {
   return toBuffer(buffer).toString(encoding, start, end)
 }
 
-function write (buffer, string, offset, length, encoding) {
+function write(buffer, string, offset, length, encoding) {
   return toBuffer(buffer).write(string, offset, length, encoding)
 }
 
-function writeDoubleLE (buffer, value, offset) {
-  return toBuffer(buffer).writeDoubleLE(value, offset)
+function readDoubleBE(buffer, offset) {
+  return toBuffer(buffer).readDoubleBE(offset)
 }
 
-function writeFloatLE (buffer, value, offset) {
-  return toBuffer(buffer).writeFloatLE(value, offset)
-}
-
-function writeUInt32LE (buffer, value, offset) {
-  return toBuffer(buffer).writeUInt32LE(value, offset)
-}
-
-function writeInt32LE (buffer, value, offset) {
-  return toBuffer(buffer).writeInt32LE(value, offset)
-}
-
-function readDoubleLE (buffer, offset) {
+function readDoubleLE(buffer, offset) {
   return toBuffer(buffer).readDoubleLE(offset)
 }
 
-function readFloatLE (buffer, offset) {
+function readFloatBE(buffer, offset) {
+  return toBuffer(buffer).readFloatBE(offset)
+}
+
+function readFloatLE(buffer, offset) {
   return toBuffer(buffer).readFloatLE(offset)
 }
 
-function readUInt32LE (buffer, offset) {
+function readInt32BE(buffer, offset) {
+  return toBuffer(buffer).readInt32BE(offset)
+}
+
+function readInt32LE(buffer, offset) {
+  return toBuffer(buffer).readInt32LE(offset)
+}
+
+function readUInt32BE(buffer, offset) {
+  return toBuffer(buffer).readUInt32BE(offset)
+}
+
+function readUInt32LE(buffer, offset) {
   return toBuffer(buffer).readUInt32LE(offset)
 }
 
-function readInt32LE (buffer, offset) {
-  return toBuffer(buffer).readInt32LE(offset)
+function writeDoubleBE(buffer, value, offset) {
+  return toBuffer(buffer).writeDoubleBE(value, offset)
+}
+
+function writeDoubleLE(buffer, value, offset) {
+  return toBuffer(buffer).writeDoubleLE(value, offset)
+}
+
+function writeFloatBE(buffer, value, offset) {
+  return toBuffer(buffer).writeFloatBE(value, offset)
+}
+
+function writeFloatLE(buffer, value, offset) {
+  return toBuffer(buffer).writeFloatLE(value, offset)
+}
+
+function writeInt32BE(buffer, value, offset) {
+  return toBuffer(buffer).writeInt32BE(value, offset)
+}
+
+function writeInt32LE(buffer, value, offset) {
+  return toBuffer(buffer).writeInt32LE(value, offset)
+}
+
+function writeUInt32BE(buffer, value, offset) {
+  return toBuffer(buffer).writeUInt32BE(value, offset)
+}
+
+function writeUInt32LE(buffer, value, offset) {
+  return toBuffer(buffer).writeUInt32LE(value, offset)
 }
 
 module.exports = {
@@ -10079,14 +8170,22 @@ module.exports = {
   toBuffer,
   toString,
   write,
-  writeDoubleLE,
-  writeFloatLE,
-  writeUInt32LE,
-  writeInt32LE,
+  readDoubleBE,
   readDoubleLE,
+  readFloatBE,
   readFloatLE,
+  readInt32BE,
+  readInt32LE,
+  readUInt32BE,
   readUInt32LE,
-  readInt32LE
+  writeDoubleBE,
+  writeDoubleLE,
+  writeFloatBE,
+  writeFloatLE,
+  writeInt32BE,
+  writeInt32LE,
+  writeUInt32BE,
+  writeUInt32LE
 }
 
 
@@ -10104,13 +8203,13 @@ const path_1 = __nccwpck_require__(16928);
 const tls_1 = __nccwpck_require__(64756);
 const util_1 = __nccwpck_require__(39023);
 const FtpContext_1 = __nccwpck_require__(36081);
+const netUtils_1 = __nccwpck_require__(76156);
+const parseControlResponse_1 = __nccwpck_require__(95931);
 const parseList_1 = __nccwpck_require__(91641);
+const parseListMLSD_1 = __nccwpck_require__(75287);
 const ProgressTracker_1 = __nccwpck_require__(35475);
 const StringWriter_1 = __nccwpck_require__(5494);
-const parseListMLSD_1 = __nccwpck_require__(75287);
-const netUtils_1 = __nccwpck_require__(76156);
 const transfer_1 = __nccwpck_require__(55115);
-const parseControlResponse_1 = __nccwpck_require__(95931);
 // Use promisify to keep the library compatible with Node 8.
 const fsReadDir = (0, util_1.promisify)(fs_1.readdir);
 const fsMkDir = (0, util_1.promisify)(fs_1.mkdir);
@@ -10118,6 +8217,10 @@ const fsStat = (0, util_1.promisify)(fs_1.stat);
 const fsOpen = (0, util_1.promisify)(fs_1.open);
 const fsClose = (0, util_1.promisify)(fs_1.close);
 const fsUnlink = (0, util_1.promisify)(fs_1.unlink);
+const defaultClientOptions = {
+    allowSeparateTransferHost: true,
+    maxListingBytes: 40 * 1024 * 1024
+};
 const LIST_COMMANDS_DEFAULT = () => ["LIST -a", "LIST"];
 const LIST_COMMANDS_MLSD = () => ["MLSD", "LIST -a", "LIST"];
 /**
@@ -10129,10 +8232,15 @@ class Client {
      *
      * @param timeout  Timeout in milliseconds, use 0 for no timeout. Optional, default is 30 seconds.
      */
-    constructor(timeout = 30000) {
+    constructor(timeout = 30000, userOptions = defaultClientOptions) {
         this.availableListCommands = LIST_COMMANDS_DEFAULT();
+        const options = { ...defaultClientOptions, ...userOptions };
         this.ftp = new FtpContext_1.FTPContext(timeout);
-        this.prepareTransfer = this._enterFirstCompatibleMode([transfer_1.enterPassiveModeIPv6, transfer_1.enterPassiveModeIPv4]);
+        this.prepareTransfer = this._enterFirstCompatibleMode([
+            transfer_1.enterPassiveModeIPv6,
+            options.allowSeparateTransferHost ? transfer_1.enterPassiveModeIPv4 : transfer_1.enterPassiveModeIPv4_forceControlHostIP
+        ]);
+        this.options = options;
         this.parseList = parseList_1.parseList;
         this._progressTracker = new ProgressTracker_1.ProgressTracker();
     }
@@ -10606,7 +8714,7 @@ class Client {
      * @protected
      */
     async _requestListWithCommand(command) {
-        const buffer = new StringWriter_1.StringWriter();
+        const buffer = new StringWriter_1.StringWriter(this.options.maxListingBytes);
         await (0, transfer_1.downloadTo)(buffer, {
             ftp: this.ftp,
             tracker: this._progressTracker,
@@ -10715,6 +8823,12 @@ class Client {
     async _downloadFromWorkingDir(localDirPath) {
         await ensureLocalDirectory(localDirPath);
         for (const file of await this.list()) {
+            const hasInvalidName = !file.name || (0, path_1.basename)(file.name) !== file.name;
+            if (hasInvalidName) {
+                const safeName = JSON.stringify(file.name);
+                this.ftp.log(`Invalid filename from server listing, will skip file. (${safeName})`);
+                continue;
+            }
             const localPath = (0, path_1.join)(localDirPath, file.name);
             if (file.isDirectory) {
                 await this.cd(file.name);
@@ -10795,7 +8909,7 @@ class Client {
                 try {
                     const res = await strategy(ftp);
                     ftp.log("Optimal transfer strategy found.");
-                    this.prepareTransfer = strategy; // eslint-disable-line require-atomic-updates
+                    this.prepareTransfer = strategy;
                     return res;
                 }
                 catch (err) {
@@ -10853,7 +8967,7 @@ async function ensureLocalDirectory(path) {
     try {
         await fsStat(path);
     }
-    catch (err) {
+    catch (_a) {
         await fsMkDir(path, { recursive: true });
     }
 }
@@ -10861,7 +8975,7 @@ async function ignoreError(func) {
     try {
         return await func();
     }
-    catch (err) {
+    catch (_a) {
         // Ignore
         return undefined;
     }
@@ -10993,6 +9107,8 @@ exports.FTPError = FTPError;
 function doNothing() {
     /** Do nothing */
 }
+// Limit the accepted size of the control response.
+const maxControlResponseLength = 2 ** 16;
 /**
  * FTPContext holds the control and data sockets of an FTP connection and provides a
  * simplified way to interact with an FTP server, handle responses, errors and timeouts.
@@ -11151,6 +9267,10 @@ class FTPContext {
      * Send an FTP command without waiting for or handling the result.
      */
     send(command) {
+        // Reject control character injection attempts.
+        if (/[\r\n\0]/.test(command)) {
+            throw new Error(`Invalid command: Contains control characters. (${command})`);
+        }
         const containsPassword = command.startsWith("PASS");
         const message = containsPassword ? "> PASS ###" : `> ${command}`;
         this.log(message);
@@ -11247,7 +9367,11 @@ class FTPContext {
      */
     _onControlSocketData(chunk) {
         this.log(`< ${chunk}`);
-        // This chunk might complete an earlier partial response.
+        // This chunk might complete an earlier partial response. Protect against unbounded response attack.
+        if (this._partialResponse.length + chunk.length > maxControlResponseLength) {
+            this.closeWithError(new Error("FTP control response exceeded maximum allowed size"));
+            return;
+        }
         const completeResponse = this._partialResponse + chunk;
         const parsed = (0, parseControlResponse_1.parseControlResponse)(completeResponse);
         // Remember any incomplete remainder.
@@ -11442,21 +9566,27 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.StringWriter = void 0;
 const stream_1 = __nccwpck_require__(2203);
 class StringWriter extends stream_1.Writable {
-    constructor() {
-        super(...arguments);
-        this.buf = Buffer.alloc(0);
+    constructor(maxByteLength = 1 * 1024 * 1024) {
+        super();
+        this.maxByteLength = maxByteLength;
+        this.byteLength = 0;
+        this.bufs = [];
     }
     _write(chunk, _, callback) {
-        if (chunk instanceof Buffer) {
-            this.buf = Buffer.concat([this.buf, chunk]);
-            callback(null);
+        if (!(chunk instanceof Buffer)) {
+            callback(new Error("StringWriter: expects chunks of type 'Buffer'."));
+            return;
         }
-        else {
-            callback(new Error("StringWriter expects chunks of type 'Buffer'."));
+        if (this.byteLength + chunk.byteLength > this.maxByteLength) {
+            callback(new Error(`StringWriter: Maximum bytes exceeded, maxByteLength=${this.maxByteLength}.`));
+            return;
         }
+        this.byteLength += chunk.byteLength;
+        this.bufs.push(chunk);
+        callback(null);
     }
     getText(encoding) {
-        return this.buf.toString(encoding);
+        return Buffer.concat(this.bufs).toString(encoding);
     }
 }
 exports.StringWriter = StringWriter;
@@ -11506,7 +9636,10 @@ Object.defineProperty(exports, "enterPassiveModeIPv6", ({ enumerable: true, get:
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ipIsPrivateV4Address = exports.upgradeSocket = exports.describeAddress = exports.describeTLS = void 0;
+exports.describeTLS = describeTLS;
+exports.describeAddress = describeAddress;
+exports.upgradeSocket = upgradeSocket;
+exports.ipIsPrivateV4Address = ipIsPrivateV4Address;
 const tls_1 = __nccwpck_require__(64756);
 /**
  * Returns a string describing the encryption on a given socket instance.
@@ -11518,7 +9651,6 @@ function describeTLS(socket) {
     }
     return "No encryption";
 }
-exports.describeTLS = describeTLS;
 /**
  * Returns a string describing the remote address of a socket.
  */
@@ -11528,7 +9660,6 @@ function describeAddress(socket) {
     }
     return `${socket.remoteAddress}:${socket.remotePort}`;
 }
-exports.describeAddress = describeAddress;
 /**
  * Upgrade a socket connection with TLS.
  */
@@ -11552,7 +9683,6 @@ function upgradeSocket(socket, options) {
         });
     });
 }
-exports.upgradeSocket = upgradeSocket;
 /**
  * Returns true if an IP is a private address according to https://tools.ietf.org/html/rfc1918#section-3.
  * This will handle IPv4-mapped IPv6 addresses correctly but return false for all other IPv6 addresses.
@@ -11570,7 +9700,6 @@ function ipIsPrivateV4Address(ip = "") {
         || (octets[0] === 192 && octets[1] === 168) // 192.168.0.0 - 192.168.255.255
         || ip === "127.0.0.1";
 }
-exports.ipIsPrivateV4Address = ipIsPrivateV4Address;
 
 
 /***/ }),
@@ -11581,7 +9710,11 @@ exports.ipIsPrivateV4Address = ipIsPrivateV4Address;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.positiveIntermediate = exports.positiveCompletion = exports.isMultiline = exports.isSingleLine = exports.parseControlResponse = void 0;
+exports.parseControlResponse = parseControlResponse;
+exports.isSingleLine = isSingleLine;
+exports.isMultiline = isMultiline;
+exports.positiveCompletion = positiveCompletion;
+exports.positiveIntermediate = positiveIntermediate;
 const LF = "\n";
 /**
  * Parse an FTP control response as a collection of messages. A message is a complete
@@ -11620,29 +9753,24 @@ function parseControlResponse(text) {
     const rest = tokenRegex ? lines.slice(startAt).join(LF) + LF : "";
     return { messages, rest };
 }
-exports.parseControlResponse = parseControlResponse;
 function isSingleLine(line) {
     return /^\d\d\d(?:$| )/.test(line);
 }
-exports.isSingleLine = isSingleLine;
 function isMultiline(line) {
     return /^\d\d\d-/.test(line);
 }
-exports.isMultiline = isMultiline;
 /**
  * Return true if an FTP return code describes a positive completion.
  */
 function positiveCompletion(code) {
     return code >= 200 && code < 300;
 }
-exports.positiveCompletion = positiveCompletion;
 /**
  * Return true if an FTP return code describes a positive intermediate response.
  */
 function positiveIntermediate(code) {
     return code >= 300 && code < 400;
 }
-exports.positiveIntermediate = positiveIntermediate;
 function isNotBlank(str) {
     return str.trim() !== "";
 }
@@ -11671,15 +9799,25 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.parseList = void 0;
+exports.parseList = parseList;
 const dosParser = __importStar(__nccwpck_require__(4439));
 const unixParser = __importStar(__nccwpck_require__(98003));
 const mlsdParser = __importStar(__nccwpck_require__(75287));
@@ -11723,7 +9861,6 @@ function parseList(rawList) {
         .filter((info) => info !== undefined);
     return parser.transformList(files);
 }
-exports.parseList = parseList;
 
 
 /***/ }),
@@ -11734,7 +9871,9 @@ exports.parseList = parseList;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.transformList = exports.parseLine = exports.testLine = void 0;
+exports.testLine = testLine;
+exports.parseLine = parseLine;
+exports.transformList = transformList;
 const FileInfo_1 = __nccwpck_require__(37666);
 /**
  * This parser is based on the FTP client library source code in Apache Commons Net provided
@@ -11754,7 +9893,6 @@ const RE_LINE = new RegExp("(\\S+)\\s+(\\S+)\\s+" // MM-dd-yy whitespace hh:mma|
 function testLine(line) {
     return /^\d{2}/.test(line) && RE_LINE.test(line);
 }
-exports.testLine = testLine;
 /**
  * Parse a single line of a DOS-style directory listing.
  */
@@ -11780,11 +9918,9 @@ function parseLine(line) {
     file.rawModifiedAt = groups[1] + " " + groups[2];
     return file;
 }
-exports.parseLine = parseLine;
 function transformList(files) {
     return files;
 }
-exports.transformList = transformList;
 
 
 /***/ }),
@@ -11795,7 +9931,10 @@ exports.transformList = transformList;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.parseMLSxDate = exports.transformList = exports.parseLine = exports.testLine = void 0;
+exports.testLine = testLine;
+exports.parseLine = parseLine;
+exports.transformList = transformList;
+exports.parseMLSxDate = parseMLSxDate;
 const FileInfo_1 = __nccwpck_require__(37666);
 function parseSize(value, info) {
     info.size = parseInt(value, 10);
@@ -11908,7 +10047,6 @@ function splitStringOnce(str, delimiter) {
 function testLine(line) {
     return /^\S+=\S+;/.test(line) || line.startsWith(" ");
 }
-exports.testLine = testLine;
 /**
  * Parse single line as MLSD listing, see specification at https://tools.ietf.org/html/rfc3659#section-7.
  */
@@ -11935,7 +10073,6 @@ function parseLine(line) {
     }
     return info;
 }
-exports.parseLine = parseLine;
 function transformList(files) {
     // Create a map of all files that are not symbolic links by their unique ID
     const nonLinksByID = new Map();
@@ -11963,7 +10100,6 @@ function transformList(files) {
     }
     return resolvedFiles;
 }
-exports.transformList = transformList;
 /**
  * Parse date as specified in https://tools.ietf.org/html/rfc3659#section-2.3.
  *
@@ -11980,7 +10116,6 @@ function parseMLSxDate(fact) {
     +fact.slice(15, 18) // Milliseconds
     ));
 }
-exports.parseMLSxDate = parseMLSxDate;
 
 
 /***/ }),
@@ -11991,7 +10126,9 @@ exports.parseMLSxDate = parseMLSxDate;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.transformList = exports.parseLine = exports.testLine = void 0;
+exports.testLine = testLine;
+exports.parseLine = parseLine;
+exports.transformList = transformList;
 const FileInfo_1 = __nccwpck_require__(37666);
 const JA_MONTH = "\u6708";
 const JA_DAY = "\u65e5";
@@ -12068,7 +10205,6 @@ const RE_LINE = new RegExp("([bcdelfmpSs-])" // file type
 function testLine(line) {
     return RE_LINE.test(line);
 }
-exports.testLine = testLine;
 /**
  * Parse a single line of a Unix-style directory listing.
  */
@@ -12126,11 +10262,9 @@ function parseLine(line) {
     }
     return file;
 }
-exports.parseLine = parseLine;
 function transformList(files) {
     return files;
 }
-exports.transformList = transformList;
 function parseMode(r, w, x) {
     let value = 0;
     if (r !== "-") {
@@ -12155,7 +10289,14 @@ function parseMode(r, w, x) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.downloadTo = exports.uploadFrom = exports.connectForPassiveTransfer = exports.parsePasvResponse = exports.enterPassiveModeIPv4 = exports.parseEpsvResponse = exports.enterPassiveModeIPv6 = void 0;
+exports.enterPassiveModeIPv6 = enterPassiveModeIPv6;
+exports.parseEpsvResponse = parseEpsvResponse;
+exports.enterPassiveModeIPv4 = enterPassiveModeIPv4;
+exports.enterPassiveModeIPv4_forceControlHostIP = enterPassiveModeIPv4_forceControlHostIP;
+exports.parsePasvResponse = parsePasvResponse;
+exports.connectForPassiveTransfer = connectForPassiveTransfer;
+exports.uploadFrom = uploadFrom;
+exports.downloadTo = downloadTo;
 const netUtils_1 = __nccwpck_require__(76156);
 const stream_1 = __nccwpck_require__(2203);
 const tls_1 = __nccwpck_require__(64756);
@@ -12176,7 +10317,6 @@ async function enterPassiveModeIPv6(ftp) {
     await connectForPassiveTransfer(controlHost, port, ftp);
     return res;
 }
-exports.enterPassiveModeIPv6 = enterPassiveModeIPv6;
 /**
  * Parse an EPSV response. Returns only the port as in EPSV the host of the control connection is used.
  */
@@ -12193,7 +10333,6 @@ function parseEpsvResponse(message) {
     }
     return port;
 }
-exports.parseEpsvResponse = parseEpsvResponse;
 /**
  * Prepare a data socket using passive mode over IPv4.
  */
@@ -12214,7 +10353,24 @@ async function enterPassiveModeIPv4(ftp) {
     await connectForPassiveTransfer(target.host, target.port, ftp);
     return res;
 }
-exports.enterPassiveModeIPv4 = enterPassiveModeIPv4;
+/**
+ * Prepare a data socket using passive mode over IPv4. Ignore the IP provided by the PASV response,
+ * and use the control host IP. This is the same behaviour as with the more modern variant EPSV. Use
+ * this to fix issues around NAT or provide more security by preventing FTP bounce attacks.
+ */
+async function enterPassiveModeIPv4_forceControlHostIP(ftp) {
+    const res = await ftp.request("PASV");
+    const target = parsePasvResponse(res.message);
+    if (!target) {
+        throw new Error("Can't parse PASV response: " + res.message);
+    }
+    const controlHost = ftp.socket.remoteAddress;
+    if (controlHost === undefined) {
+        throw new Error("Control socket is disconnected, can't get remote address.");
+    }
+    await connectForPassiveTransfer(controlHost, target.port, ftp);
+    return res;
+}
 /**
  * Parse a PASV response.
  */
@@ -12229,7 +10385,6 @@ function parsePasvResponse(message) {
         port: (parseInt(groups[2], 10) & 255) * 256 + (parseInt(groups[3], 10) & 255)
     };
 }
-exports.parsePasvResponse = parsePasvResponse;
 function connectForPassiveTransfer(host, port, ftp) {
     return new Promise((resolve, reject) => {
         let socket = ftp._newSocket();
@@ -12271,7 +10426,6 @@ function connectForPassiveTransfer(host, port, ftp) {
         });
     });
 }
-exports.connectForPassiveTransfer = connectForPassiveTransfer;
 /**
  * Helps resolving/rejecting transfers.
  *
@@ -12396,7 +10550,6 @@ function uploadFrom(source, config) {
         // Ignore all other positive preliminary response codes (< 200)
     });
 }
-exports.uploadFrom = uploadFrom;
 function downloadTo(destination, config) {
     if (!config.ftp.dataSocket) {
         throw new Error("Download will be initiated but no data connection is available.");
@@ -12435,7 +10588,6 @@ function downloadTo(destination, config) {
         // Ignore all other positive preliminary response codes (< 200)
     });
 }
-exports.downloadTo = downloadTo;
 /**
  * Calls a function immediately if a condition is met or subscribes to an event and calls
  * it once the event is emitted.
@@ -13726,6 +11878,7 @@ const cdpToBidiTargetTypes = {
 class CdpTargetManager {
     #browserCdpClient;
     #cdpConnection;
+    #targetKeysToBeIgnoredByAutoAttach = new Set();
     #selfTargetId;
     #eventManager;
     #browsingContextStorage;
@@ -13738,6 +11891,7 @@ class CdpTargetManager {
     constructor(cdpConnection, browserCdpClient, selfTargetId, eventManager, browsingContextStorage, realmStorage, networkStorage, preloadScriptStorage, defaultUserContextId, unhandledPromptBehavior, logger) {
         this.#cdpConnection = cdpConnection;
         this.#browserCdpClient = browserCdpClient;
+        this.#targetKeysToBeIgnoredByAutoAttach.add(selfTargetId);
         this.#selfTargetId = selfTargetId;
         this.#eventManager = eventManager;
         this.#browsingContextStorage = browsingContextStorage;
@@ -13784,15 +11938,41 @@ class CdpTargetManager {
     #handleAttachedToTargetEvent(params, parentSessionCdpClient) {
         const { sessionId, targetInfo } = params;
         const targetCdpClient = this.#cdpConnection.getCdpClient(sessionId);
+        const detach = async () => {
+            // Detaches and resumes the target suppressing errors.
+            await targetCdpClient
+                .sendCommand('Runtime.runIfWaitingForDebugger')
+                .then(() => parentSessionCdpClient.sendCommand('Target.detachFromTarget', params))
+                .catch((error) => this.#logger?.(log_js_1.LogType.debugError, error));
+        };
+        if (this.#selfTargetId !== targetInfo.targetId) {
+            // Service workers are special case because they attach to the
+            // browser target and the page target (so twice per worker) during
+            // the regular auto-attach and might hang if the CDP session on
+            // the browser level is not detached. The logic to detach the
+            // right session is handled in the switch below.
+            const targetKey = targetInfo.type === 'service_worker'
+                ? `${parentSessionCdpClient.sessionId}_${targetInfo.targetId}`
+                : targetInfo.targetId;
+            // Mapper generally only needs one session per target. If we
+            // receive additional auto-attached sessions, that is very likely
+            // coming from custom CDP sessions.
+            if (this.#targetKeysToBeIgnoredByAutoAttach.has(targetKey)) {
+                // Return to leave the session untouched.
+                return;
+            }
+            this.#targetKeysToBeIgnoredByAutoAttach.add(targetKey);
+        }
         switch (targetInfo.type) {
             case 'page':
             case 'iframe': {
-                if (targetInfo.targetId === this.#selfTargetId) {
-                    break;
+                if (this.#selfTargetId === targetInfo.targetId) {
+                    void detach();
+                    return;
                 }
                 const cdpTarget = this.#createCdpTarget(targetCdpClient, targetInfo);
                 const maybeContext = this.#browsingContextStorage.findContext(targetInfo.targetId);
-                if (maybeContext) {
+                if (maybeContext && targetInfo.type === 'iframe') {
                     // OOPiF.
                     maybeContext.updateCdpTarget(cdpTarget);
                 }
@@ -13822,7 +12002,8 @@ class CdpTargetManager {
                 });
                 // If there is no browsing context, this worker is already terminated.
                 if (!realm) {
-                    break;
+                    void detach();
+                    return;
                 }
                 const cdpTarget = this.#createCdpTarget(targetCdpClient, targetInfo);
                 this.#handleWorkerTarget(cdpToBidiTargetTypes[targetInfo.type], cdpTarget, realm);
@@ -13840,10 +12021,7 @@ class CdpTargetManager {
         }
         // DevTools or some other not supported by BiDi target. Just release
         // debugger and ignore them.
-        targetCdpClient
-            .sendCommand('Runtime.runIfWaitingForDebugger')
-            .then(() => parentSessionCdpClient.sendCommand('Target.detachFromTarget', params))
-            .catch((error) => this.#logger?.(log_js_1.LogType.debugError, error));
+        void detach();
     }
     #createCdpTarget(targetCdpClient, targetInfo) {
         this.#setEventListeners(targetCdpClient);
@@ -14416,6 +12594,7 @@ class BrowsingContextImpl {
                     defaultPromptHandler);
             case "beforeunload" /* BrowsingContext.UserPromptType.Beforeunload */:
                 return (this.#unhandledPromptBehavior?.beforeUnload ??
+                    this.#unhandledPromptBehavior?.default ??
                     "accept" /* Session.UserPromptHandlerType.Accept */);
             case "confirm" /* BrowsingContext.UserPromptType.Confirm */:
                 return (this.#unhandledPromptBehavior?.confirm ??
@@ -17896,8 +16075,6 @@ class NetworkProcessor {
         const request = this.#getBlockedRequestOrFail(params.request, [
             "beforeRequestSent" /* Network.InterceptPhase.BeforeRequestSent */,
         ]);
-        // TODO: Set / expand.
-        // ; Step 9. cookies
         try {
             await request.continueRequest(params);
         }
@@ -17914,8 +16091,6 @@ class NetworkProcessor {
             "authRequired" /* Network.InterceptPhase.AuthRequired */,
             "responseStarted" /* Network.InterceptPhase.ResponseStarted */,
         ]);
-        // TODO: Set / expand.
-        // ; Step 10. cookies
         try {
             await request.continueResponse(params);
         }
@@ -17947,8 +16122,6 @@ class NetworkProcessor {
         if (params.headers) {
             NetworkProcessor.validateHeaders(params.headers);
         }
-        // TODO: Set / expand.
-        // ; Step 10. cookies
         const request = this.#getBlockedRequestOrFail(params.request, [
             "beforeRequestSent" /* Network.InterceptPhase.BeforeRequestSent */,
             "responseStarted" /* Network.InterceptPhase.ResponseStarted */,
@@ -18242,7 +16415,7 @@ class NetworkRequest {
     isRedirecting() {
         return Boolean(this.#request.info);
     }
-    isDataUrl() {
+    #isDataUrl() {
         return this.url.startsWith('data:');
     }
     get #method() {
@@ -18334,22 +16507,25 @@ class NetworkRequest {
         }
         return authChallenges;
     }
-    // TODO: implement.
     get #timings() {
         return {
-            timeOrigin: 0,
-            requestTime: 0,
+            // TODO: Verify this is correct
+            timeOrigin: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.requestTime),
+            requestTime: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.requestTime),
             redirectStart: 0,
             redirectEnd: 0,
-            fetchStart: 0,
-            dnsStart: 0,
-            dnsEnd: 0,
-            connectStart: 0,
-            connectEnd: 0,
-            tlsStart: 0,
-            requestStart: 0,
-            responseStart: 0,
-            responseEnd: 0,
+            // TODO: Verify this is correct
+            // https://source.chromium.org/chromium/chromium/src/+/main:net/base/load_timing_info.h;l=145
+            fetchStart: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.requestTime),
+            dnsStart: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.dnsStart),
+            dnsEnd: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.dnsEnd),
+            connectStart: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.connectStart),
+            connectEnd: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.connectEnd),
+            tlsStart: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.sslStart),
+            requestStart: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.sendStart),
+            // https://source.chromium.org/chromium/chromium/src/+/main:net/base/load_timing_info.h;l=196
+            responseStart: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.receiveHeadersStart),
+            responseEnd: (0, NetworkUtils_js_1.getTiming)(this.#response.info?.timing?.receiveHeadersEnd),
         };
     }
     #phaseChanged() {
@@ -18379,7 +16555,7 @@ class NetworkRequest {
         // Flush redirects
         options.wasRedirected ||
             options.hasFailed ||
-            this.isDataUrl() ||
+            this.#isDataUrl() ||
             Boolean(this.#request.extraInfo) ||
             // Requests from cache don't have extra info
             this.#servedFromCache ||
@@ -18388,7 +16564,7 @@ class NetworkRequest {
             Boolean(this.#response.info && !this.#response.hasExtraInfo);
         const noInterceptionExpected = 
         // We can't intercept data urls from CDP
-        this.isDataUrl() ||
+        this.#isDataUrl() ||
             // Cached requests never hit the network
             this.#servedFromCache;
         const requestInterceptionExpected = !noInterceptionExpected &&
@@ -18530,7 +16706,8 @@ class NetworkRequest {
     }
     /** @see https://chromedevtools.github.io/devtools-protocol/tot/Fetch/#method-continueRequest */
     async continueRequest(overrides = {}) {
-        const headers = (0, NetworkUtils_js_1.cdpFetchHeadersFromBidiNetworkHeaders)(overrides.headers);
+        const overrideHeaders = this.#getOverrideHeader(overrides.headers, overrides.cookies);
+        const headers = (0, NetworkUtils_js_1.cdpFetchHeadersFromBidiNetworkHeaders)(overrideHeaders);
         const postData = getCdpBodyFromBiDiBytesValue(overrides.body);
         await this.#continueRequest({
             url: overrides.url,
@@ -18542,6 +16719,7 @@ class NetworkRequest {
             url: overrides.url,
             method: overrides.method,
             headers: overrides.headers,
+            cookies: overrides.cookies,
             bodySize: getSizeFromBiDiBytesValue(overrides.body),
         };
     }
@@ -18578,7 +16756,8 @@ class NetworkRequest {
             }
         }
         if (this.#interceptPhase === "responseStarted" /* Network.InterceptPhase.ResponseStarted */) {
-            const responseHeaders = (0, NetworkUtils_js_1.cdpFetchHeadersFromBidiNetworkHeaders)(overrides.headers);
+            const overrideHeaders = this.#getOverrideHeader(overrides.headers, overrides.cookies);
+            const responseHeaders = (0, NetworkUtils_js_1.cdpFetchHeadersFromBidiNetworkHeaders)(overrideHeaders);
             await this.#continueResponse({
                 responseCode: overrides.statusCode,
                 responsePhrase: overrides.reasonPhrase,
@@ -18629,9 +16808,8 @@ class NetworkRequest {
         if (!overrides.body && !overrides.headers) {
             return await this.#continueRequest();
         }
-        // TODO: Step 6
-        // https://w3c.github.io/webdriver-bidi/#command-network-continueResponse
-        const responseHeaders = (0, NetworkUtils_js_1.cdpFetchHeadersFromBidiNetworkHeaders)(overrides.headers);
+        const overrideHeaders = this.#getOverrideHeader(overrides.headers, overrides.cookies);
+        const responseHeaders = (0, NetworkUtils_js_1.cdpFetchHeadersFromBidiNetworkHeaders)(overrideHeaders);
         const responseCode = overrides.statusCode ?? this.#statusCode ?? 200;
         await this.cdpClient.sendCommand('Fetch.fulfillRequest', {
             requestId: this.#fetchId,
@@ -18688,7 +16866,7 @@ class NetworkRequest {
             redirectCount: this.#redirectCount,
             request: this.#getRequestData(),
             // Timestamp should be in milliseconds, while CDP provides it in seconds.
-            timestamp: Math.round((this.#request.info?.wallTime ?? 0) * 1000),
+            timestamp: Math.round((0, NetworkUtils_js_1.getTiming)(this.#request.info?.wallTime) * 1000),
             // Contains isBlocked and intercepts
             ...interceptProps,
         };
@@ -18790,6 +16968,23 @@ class NetworkRequest {
         return (this.#request.paused?.request.url.endsWith(faviconUrl) ??
             this.#request.info?.request.url.endsWith(faviconUrl) ??
             false);
+    }
+    #getOverrideHeader(headers, cookies) {
+        if (!headers && !cookies) {
+            return undefined;
+        }
+        let overrideHeaders = headers;
+        const cookieHeader = (0, NetworkUtils_js_1.networkHeaderFromCookieHeaders)(cookies);
+        if (cookieHeader && !overrideHeaders) {
+            overrideHeaders = this.#requestHeaders;
+        }
+        if (cookieHeader && overrideHeaders) {
+            overrideHeaders.filter((header) => header.name.localeCompare('cookie', undefined, {
+                sensitivity: 'base',
+            }) !== 0);
+            overrideHeaders.push(cookieHeader);
+        }
+        return overrideHeaders;
     }
     static #getInitiatorType(initiatorType) {
         switch (initiatorType) {
@@ -19072,6 +17267,7 @@ exports.bidiNetworkHeadersFromCdpNetworkHeadersEntries = bidiNetworkHeadersFromC
 exports.cdpNetworkHeadersFromBidiNetworkHeaders = cdpNetworkHeadersFromBidiNetworkHeaders;
 exports.bidiNetworkHeadersFromCdpFetchHeaders = bidiNetworkHeadersFromCdpFetchHeaders;
 exports.cdpFetchHeadersFromBidiNetworkHeaders = cdpFetchHeadersFromBidiNetworkHeaders;
+exports.networkHeaderFromCookieHeaders = networkHeaderFromCookieHeaders;
 exports.cdpAuthChallengeResponseFromBidiAuthContinueWithAuthAction = cdpAuthChallengeResponseFromBidiAuthContinueWithAuthAction;
 exports.cdpToBiDiCookie = cdpToBiDiCookie;
 exports.deserializeByteValue = deserializeByteValue;
@@ -19080,6 +17276,7 @@ exports.sameSiteBiDiToCdp = sameSiteBiDiToCdp;
 exports.isSpecialScheme = isSpecialScheme;
 exports.matchUrlPattern = matchUrlPattern;
 exports.bidiBodySizeFromCdpPostDataEntries = bidiBodySizeFromCdpPostDataEntries;
+exports.getTiming = getTiming;
 const ErrorResponse_js_1 = __nccwpck_require__(52772);
 const Base64_js_1 = __nccwpck_require__(52163);
 const UrlPattern_js_1 = __nccwpck_require__(49201);
@@ -19148,6 +17345,28 @@ function cdpFetchHeadersFromBidiNetworkHeaders(headers) {
         name,
         value: value.value,
     }));
+}
+function networkHeaderFromCookieHeaders(headers) {
+    if (headers === undefined) {
+        return undefined;
+    }
+    const value = headers.reduce((acc, value, index) => {
+        if (index > 0) {
+            acc += ';';
+        }
+        const cookieValue = value.value.type === 'base64'
+            ? btoa(value.value.value)
+            : value.value.value;
+        acc += `${value.name}=${cookieValue}`;
+        return acc;
+    }, '');
+    return {
+        name: 'Cookie',
+        value: {
+            type: 'string',
+            value,
+        },
+    };
 }
 /** Converts from Bidi auth action to CDP auth challenge response. */
 function cdpAuthChallengeResponseFromBidiAuthContinueWithAuthAction(action) {
@@ -19309,6 +17528,15 @@ function bidiBodySizeFromCdpPostDataEntries(entries) {
         size += atob(entry.bytes ?? '').length;
     }
     return size;
+}
+function getTiming(timing) {
+    if (!timing) {
+        return 0;
+    }
+    if (timing < 0) {
+        return 0;
+    }
+    return timing;
 }
 //# sourceMappingURL=NetworkUtils.js.map
 
@@ -25268,14 +23496,17 @@ function useColors() {
 		return false;
 	}
 
+	let m;
+
 	// Is webkit? http://stackoverflow.com/a/16459606/376773
 	// document is undefined in react-native: https://github.com/facebook/react-native/pull/1632
+	// eslint-disable-next-line no-return-assign
 	return (typeof document !== 'undefined' && document.documentElement && document.documentElement.style && document.documentElement.style.WebkitAppearance) ||
 		// Is firebug? http://stackoverflow.com/a/398120/376773
 		(typeof window !== 'undefined' && window.console && (window.console.firebug || (window.console.exception && window.console.table))) ||
 		// Is firefox >= v31?
 		// https://developer.mozilla.org/en-US/docs/Tools/Web_Console#Styling_messages
-		(typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.toLowerCase().match(/firefox\/(\d+)/) && parseInt(RegExp.$1, 10) >= 31) ||
+		(typeof navigator !== 'undefined' && navigator.userAgent && (m = navigator.userAgent.toLowerCase().match(/firefox\/(\d+)/)) && parseInt(m[1], 10) >= 31) ||
 		// Double check webkit in userAgent just in case we are in a worker
 		(typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.toLowerCase().match(/applewebkit\/(\d+)/));
 }
@@ -25359,7 +23590,7 @@ function save(namespaces) {
 function load() {
 	let r;
 	try {
-		r = exports.storage.getItem('debug');
+		r = exports.storage.getItem('debug') || exports.storage.getItem('DEBUG') ;
 	} catch (error) {
 		// Swallow
 		// XXX (@Qix-) should we be logging these?
@@ -25585,24 +23816,62 @@ function setup(env) {
 		createDebug.names = [];
 		createDebug.skips = [];
 
-		let i;
-		const split = (typeof namespaces === 'string' ? namespaces : '').split(/[\s,]+/);
-		const len = split.length;
+		const split = (typeof namespaces === 'string' ? namespaces : '')
+			.trim()
+			.replace(/\s+/g, ',')
+			.split(',')
+			.filter(Boolean);
 
-		for (i = 0; i < len; i++) {
-			if (!split[i]) {
-				// ignore empty strings
-				continue;
-			}
-
-			namespaces = split[i].replace(/\*/g, '.*?');
-
-			if (namespaces[0] === '-') {
-				createDebug.skips.push(new RegExp('^' + namespaces.slice(1) + '$'));
+		for (const ns of split) {
+			if (ns[0] === '-') {
+				createDebug.skips.push(ns.slice(1));
 			} else {
-				createDebug.names.push(new RegExp('^' + namespaces + '$'));
+				createDebug.names.push(ns);
 			}
 		}
+	}
+
+	/**
+	 * Checks if the given string matches a namespace template, honoring
+	 * asterisks as wildcards.
+	 *
+	 * @param {String} search
+	 * @param {String} template
+	 * @return {Boolean}
+	 */
+	function matchesTemplate(search, template) {
+		let searchIndex = 0;
+		let templateIndex = 0;
+		let starIndex = -1;
+		let matchIndex = 0;
+
+		while (searchIndex < search.length) {
+			if (templateIndex < template.length && (template[templateIndex] === search[searchIndex] || template[templateIndex] === '*')) {
+				// Match character or proceed with wildcard
+				if (template[templateIndex] === '*') {
+					starIndex = templateIndex;
+					matchIndex = searchIndex;
+					templateIndex++; // Skip the '*'
+				} else {
+					searchIndex++;
+					templateIndex++;
+				}
+			} else if (starIndex !== -1) { // eslint-disable-line no-negated-condition
+				// Backtrack to the last '*' and try to match more characters
+				templateIndex = starIndex + 1;
+				matchIndex++;
+				searchIndex = matchIndex;
+			} else {
+				return false; // No match
+			}
+		}
+
+		// Handle trailing '*' in template
+		while (templateIndex < template.length && template[templateIndex] === '*') {
+			templateIndex++;
+		}
+
+		return templateIndex === template.length;
 	}
 
 	/**
@@ -25613,8 +23882,8 @@ function setup(env) {
 	*/
 	function disable() {
 		const namespaces = [
-			...createDebug.names.map(toNamespace),
-			...createDebug.skips.map(toNamespace).map(namespace => '-' + namespace)
+			...createDebug.names,
+			...createDebug.skips.map(namespace => '-' + namespace)
 		].join(',');
 		createDebug.enable('');
 		return namespaces;
@@ -25628,39 +23897,19 @@ function setup(env) {
 	* @api public
 	*/
 	function enabled(name) {
-		if (name[name.length - 1] === '*') {
-			return true;
-		}
-
-		let i;
-		let len;
-
-		for (i = 0, len = createDebug.skips.length; i < len; i++) {
-			if (createDebug.skips[i].test(name)) {
+		for (const skip of createDebug.skips) {
+			if (matchesTemplate(name, skip)) {
 				return false;
 			}
 		}
 
-		for (i = 0, len = createDebug.names.length; i < len; i++) {
-			if (createDebug.names[i].test(name)) {
+		for (const ns of createDebug.names) {
+			if (matchesTemplate(name, ns)) {
 				return true;
 			}
 		}
 
 		return false;
-	}
-
-	/**
-	* Convert regexp to namespace
-	*
-	* @param {RegExp} regxep
-	* @return {String} namespace
-	* @api private
-	*/
-	function toNamespace(regexp) {
-		return regexp.toString()
-			.substring(2, regexp.toString().length - 2)
-			.replace(/\.\*\?$/, '*');
 	}
 
 	/**
@@ -26306,6 +24555,8 @@ var once = __nccwpck_require__(55560);
 
 var noop = function() {};
 
+var qnt = global.Bare ? queueMicrotask : process.nextTick.bind(process);
+
 var isRequest = function(stream) {
 	return stream.setHeader && typeof stream.abort === 'function';
 };
@@ -26349,7 +24600,7 @@ var eos = function(stream, opts, callback) {
 	};
 
 	var onclose = function() {
-		process.nextTick(onclosenexttick);
+		qnt(onclosenexttick);
 	};
 
 	var onclosenexttick = function() {
@@ -37356,6 +35607,14 @@ return /******/ (function(modules) { // webpackBootstrap
 
 /***/ }),
 
+/***/ 29580:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+module.exports = __nccwpck_require__(24434)
+
+
+/***/ }),
+
 /***/ 51683:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -38068,1605 +36327,6 @@ function createFromFd(fd, options) {
 
 /***/ }),
 
-/***/ 14839:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const fs = __nccwpck_require__(35744)
-const path = __nccwpck_require__(16928)
-const mkdirsSync = (__nccwpck_require__(31089).mkdirsSync)
-const utimesMillisSync = (__nccwpck_require__(96934).utimesMillisSync)
-const stat = __nccwpck_require__(90887)
-
-function copySync (src, dest, opts) {
-  if (typeof opts === 'function') {
-    opts = { filter: opts }
-  }
-
-  opts = opts || {}
-  opts.clobber = 'clobber' in opts ? !!opts.clobber : true // default to true for now
-  opts.overwrite = 'overwrite' in opts ? !!opts.overwrite : opts.clobber // overwrite falls back to clobber
-
-  // Warn about using preserveTimestamps on 32-bit node
-  if (opts.preserveTimestamps && process.arch === 'ia32') {
-    process.emitWarning(
-      'Using the preserveTimestamps option in 32-bit node is not recommended;\n\n' +
-      '\tsee https://github.com/jprichardson/node-fs-extra/issues/269',
-      'Warning', 'fs-extra-WARN0002'
-    )
-  }
-
-  const { srcStat, destStat } = stat.checkPathsSync(src, dest, 'copy', opts)
-  stat.checkParentPathsSync(src, srcStat, dest, 'copy')
-  if (opts.filter && !opts.filter(src, dest)) return
-  const destParent = path.dirname(dest)
-  if (!fs.existsSync(destParent)) mkdirsSync(destParent)
-  return getStats(destStat, src, dest, opts)
-}
-
-function getStats (destStat, src, dest, opts) {
-  const statSync = opts.dereference ? fs.statSync : fs.lstatSync
-  const srcStat = statSync(src)
-
-  if (srcStat.isDirectory()) return onDir(srcStat, destStat, src, dest, opts)
-  else if (srcStat.isFile() ||
-           srcStat.isCharacterDevice() ||
-           srcStat.isBlockDevice()) return onFile(srcStat, destStat, src, dest, opts)
-  else if (srcStat.isSymbolicLink()) return onLink(destStat, src, dest, opts)
-  else if (srcStat.isSocket()) throw new Error(`Cannot copy a socket file: ${src}`)
-  else if (srcStat.isFIFO()) throw new Error(`Cannot copy a FIFO pipe: ${src}`)
-  throw new Error(`Unknown file: ${src}`)
-}
-
-function onFile (srcStat, destStat, src, dest, opts) {
-  if (!destStat) return copyFile(srcStat, src, dest, opts)
-  return mayCopyFile(srcStat, src, dest, opts)
-}
-
-function mayCopyFile (srcStat, src, dest, opts) {
-  if (opts.overwrite) {
-    fs.unlinkSync(dest)
-    return copyFile(srcStat, src, dest, opts)
-  } else if (opts.errorOnExist) {
-    throw new Error(`'${dest}' already exists`)
-  }
-}
-
-function copyFile (srcStat, src, dest, opts) {
-  fs.copyFileSync(src, dest)
-  if (opts.preserveTimestamps) handleTimestamps(srcStat.mode, src, dest)
-  return setDestMode(dest, srcStat.mode)
-}
-
-function handleTimestamps (srcMode, src, dest) {
-  // Make sure the file is writable before setting the timestamp
-  // otherwise open fails with EPERM when invoked with 'r+'
-  // (through utimes call)
-  if (fileIsNotWritable(srcMode)) makeFileWritable(dest, srcMode)
-  return setDestTimestamps(src, dest)
-}
-
-function fileIsNotWritable (srcMode) {
-  return (srcMode & 0o200) === 0
-}
-
-function makeFileWritable (dest, srcMode) {
-  return setDestMode(dest, srcMode | 0o200)
-}
-
-function setDestMode (dest, srcMode) {
-  return fs.chmodSync(dest, srcMode)
-}
-
-function setDestTimestamps (src, dest) {
-  // The initial srcStat.atime cannot be trusted
-  // because it is modified by the read(2) system call
-  // (See https://nodejs.org/api/fs.html#fs_stat_time_values)
-  const updatedSrcStat = fs.statSync(src)
-  return utimesMillisSync(dest, updatedSrcStat.atime, updatedSrcStat.mtime)
-}
-
-function onDir (srcStat, destStat, src, dest, opts) {
-  if (!destStat) return mkDirAndCopy(srcStat.mode, src, dest, opts)
-  return copyDir(src, dest, opts)
-}
-
-function mkDirAndCopy (srcMode, src, dest, opts) {
-  fs.mkdirSync(dest)
-  copyDir(src, dest, opts)
-  return setDestMode(dest, srcMode)
-}
-
-function copyDir (src, dest, opts) {
-  fs.readdirSync(src).forEach(item => copyDirItem(item, src, dest, opts))
-}
-
-function copyDirItem (item, src, dest, opts) {
-  const srcItem = path.join(src, item)
-  const destItem = path.join(dest, item)
-  if (opts.filter && !opts.filter(srcItem, destItem)) return
-  const { destStat } = stat.checkPathsSync(srcItem, destItem, 'copy', opts)
-  return getStats(destStat, srcItem, destItem, opts)
-}
-
-function onLink (destStat, src, dest, opts) {
-  let resolvedSrc = fs.readlinkSync(src)
-  if (opts.dereference) {
-    resolvedSrc = path.resolve(process.cwd(), resolvedSrc)
-  }
-
-  if (!destStat) {
-    return fs.symlinkSync(resolvedSrc, dest)
-  } else {
-    let resolvedDest
-    try {
-      resolvedDest = fs.readlinkSync(dest)
-    } catch (err) {
-      // dest exists and is a regular file or directory,
-      // Windows may throw UNKNOWN error. If dest already exists,
-      // fs throws error anyway, so no need to guard against it here.
-      if (err.code === 'EINVAL' || err.code === 'UNKNOWN') return fs.symlinkSync(resolvedSrc, dest)
-      throw err
-    }
-    if (opts.dereference) {
-      resolvedDest = path.resolve(process.cwd(), resolvedDest)
-    }
-    if (stat.isSrcSubdir(resolvedSrc, resolvedDest)) {
-      throw new Error(`Cannot copy '${resolvedSrc}' to a subdirectory of itself, '${resolvedDest}'.`)
-    }
-
-    // prevent copy if src is a subdir of dest since unlinking
-    // dest in this case would result in removing src contents
-    // and therefore a broken symlink would be created.
-    if (stat.isSrcSubdir(resolvedDest, resolvedSrc)) {
-      throw new Error(`Cannot overwrite '${resolvedDest}' with '${resolvedSrc}'.`)
-    }
-    return copyLink(resolvedSrc, dest)
-  }
-}
-
-function copyLink (resolvedSrc, dest) {
-  fs.unlinkSync(dest)
-  return fs.symlinkSync(resolvedSrc, dest)
-}
-
-module.exports = copySync
-
-
-/***/ }),
-
-/***/ 81759:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const fs = __nccwpck_require__(3506)
-const path = __nccwpck_require__(16928)
-const { mkdirs } = __nccwpck_require__(31089)
-const { pathExists } = __nccwpck_require__(52881)
-const { utimesMillis } = __nccwpck_require__(96934)
-const stat = __nccwpck_require__(90887)
-
-async function copy (src, dest, opts = {}) {
-  if (typeof opts === 'function') {
-    opts = { filter: opts }
-  }
-
-  opts.clobber = 'clobber' in opts ? !!opts.clobber : true // default to true for now
-  opts.overwrite = 'overwrite' in opts ? !!opts.overwrite : opts.clobber // overwrite falls back to clobber
-
-  // Warn about using preserveTimestamps on 32-bit node
-  if (opts.preserveTimestamps && process.arch === 'ia32') {
-    process.emitWarning(
-      'Using the preserveTimestamps option in 32-bit node is not recommended;\n\n' +
-      '\tsee https://github.com/jprichardson/node-fs-extra/issues/269',
-      'Warning', 'fs-extra-WARN0001'
-    )
-  }
-
-  const { srcStat, destStat } = await stat.checkPaths(src, dest, 'copy', opts)
-
-  await stat.checkParentPaths(src, srcStat, dest, 'copy')
-
-  const include = await runFilter(src, dest, opts)
-
-  if (!include) return
-
-  // check if the parent of dest exists, and create it if it doesn't exist
-  const destParent = path.dirname(dest)
-  const dirExists = await pathExists(destParent)
-  if (!dirExists) {
-    await mkdirs(destParent)
-  }
-
-  await getStatsAndPerformCopy(destStat, src, dest, opts)
-}
-
-async function runFilter (src, dest, opts) {
-  if (!opts.filter) return true
-  return opts.filter(src, dest)
-}
-
-async function getStatsAndPerformCopy (destStat, src, dest, opts) {
-  const statFn = opts.dereference ? fs.stat : fs.lstat
-  const srcStat = await statFn(src)
-
-  if (srcStat.isDirectory()) return onDir(srcStat, destStat, src, dest, opts)
-
-  if (
-    srcStat.isFile() ||
-    srcStat.isCharacterDevice() ||
-    srcStat.isBlockDevice()
-  ) return onFile(srcStat, destStat, src, dest, opts)
-
-  if (srcStat.isSymbolicLink()) return onLink(destStat, src, dest, opts)
-  if (srcStat.isSocket()) throw new Error(`Cannot copy a socket file: ${src}`)
-  if (srcStat.isFIFO()) throw new Error(`Cannot copy a FIFO pipe: ${src}`)
-  throw new Error(`Unknown file: ${src}`)
-}
-
-async function onFile (srcStat, destStat, src, dest, opts) {
-  if (!destStat) return copyFile(srcStat, src, dest, opts)
-
-  if (opts.overwrite) {
-    await fs.unlink(dest)
-    return copyFile(srcStat, src, dest, opts)
-  }
-  if (opts.errorOnExist) {
-    throw new Error(`'${dest}' already exists`)
-  }
-}
-
-async function copyFile (srcStat, src, dest, opts) {
-  await fs.copyFile(src, dest)
-  if (opts.preserveTimestamps) {
-    // Make sure the file is writable before setting the timestamp
-    // otherwise open fails with EPERM when invoked with 'r+'
-    // (through utimes call)
-    if (fileIsNotWritable(srcStat.mode)) {
-      await makeFileWritable(dest, srcStat.mode)
-    }
-
-    // Set timestamps and mode correspondingly
-
-    // Note that The initial srcStat.atime cannot be trusted
-    // because it is modified by the read(2) system call
-    // (See https://nodejs.org/api/fs.html#fs_stat_time_values)
-    const updatedSrcStat = await fs.stat(src)
-    await utimesMillis(dest, updatedSrcStat.atime, updatedSrcStat.mtime)
-  }
-
-  return fs.chmod(dest, srcStat.mode)
-}
-
-function fileIsNotWritable (srcMode) {
-  return (srcMode & 0o200) === 0
-}
-
-function makeFileWritable (dest, srcMode) {
-  return fs.chmod(dest, srcMode | 0o200)
-}
-
-async function onDir (srcStat, destStat, src, dest, opts) {
-  // the dest directory might not exist, create it
-  if (!destStat) {
-    await fs.mkdir(dest)
-  }
-
-  const items = await fs.readdir(src)
-
-  // loop through the files in the current directory to copy everything
-  await Promise.all(items.map(async item => {
-    const srcItem = path.join(src, item)
-    const destItem = path.join(dest, item)
-
-    // skip the item if it is matches by the filter function
-    const include = await runFilter(srcItem, destItem, opts)
-    if (!include) return
-
-    const { destStat } = await stat.checkPaths(srcItem, destItem, 'copy', opts)
-
-    // If the item is a copyable file, `getStatsAndPerformCopy` will copy it
-    // If the item is a directory, `getStatsAndPerformCopy` will call `onDir` recursively
-    return getStatsAndPerformCopy(destStat, srcItem, destItem, opts)
-  }))
-
-  if (!destStat) {
-    await fs.chmod(dest, srcStat.mode)
-  }
-}
-
-async function onLink (destStat, src, dest, opts) {
-  let resolvedSrc = await fs.readlink(src)
-  if (opts.dereference) {
-    resolvedSrc = path.resolve(process.cwd(), resolvedSrc)
-  }
-  if (!destStat) {
-    return fs.symlink(resolvedSrc, dest)
-  }
-
-  let resolvedDest = null
-  try {
-    resolvedDest = await fs.readlink(dest)
-  } catch (e) {
-    // dest exists and is a regular file or directory,
-    // Windows may throw UNKNOWN error. If dest already exists,
-    // fs throws error anyway, so no need to guard against it here.
-    if (e.code === 'EINVAL' || e.code === 'UNKNOWN') return fs.symlink(resolvedSrc, dest)
-    throw e
-  }
-  if (opts.dereference) {
-    resolvedDest = path.resolve(process.cwd(), resolvedDest)
-  }
-  if (stat.isSrcSubdir(resolvedSrc, resolvedDest)) {
-    throw new Error(`Cannot copy '${resolvedSrc}' to a subdirectory of itself, '${resolvedDest}'.`)
-  }
-
-  // do not copy if src is a subdir of dest since unlinking
-  // dest in this case would result in removing src contents
-  // and therefore a broken symlink would be created.
-  if (stat.isSrcSubdir(resolvedDest, resolvedSrc)) {
-    throw new Error(`Cannot overwrite '${resolvedDest}' with '${resolvedSrc}'.`)
-  }
-
-  // copy the link
-  await fs.unlink(dest)
-  return fs.symlink(resolvedSrc, dest)
-}
-
-module.exports = copy
-
-
-/***/ }),
-
-/***/ 75796:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const u = (__nccwpck_require__(95077).fromPromise)
-module.exports = {
-  copy: u(__nccwpck_require__(81759)),
-  copySync: __nccwpck_require__(14839)
-}
-
-
-/***/ }),
-
-/***/ 47882:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const u = (__nccwpck_require__(95077).fromPromise)
-const fs = __nccwpck_require__(3506)
-const path = __nccwpck_require__(16928)
-const mkdir = __nccwpck_require__(31089)
-const remove = __nccwpck_require__(56205)
-
-const emptyDir = u(async function emptyDir (dir) {
-  let items
-  try {
-    items = await fs.readdir(dir)
-  } catch {
-    return mkdir.mkdirs(dir)
-  }
-
-  return Promise.all(items.map(item => remove.remove(path.join(dir, item))))
-})
-
-function emptyDirSync (dir) {
-  let items
-  try {
-    items = fs.readdirSync(dir)
-  } catch {
-    return mkdir.mkdirsSync(dir)
-  }
-
-  items.forEach(item => {
-    item = path.join(dir, item)
-    remove.removeSync(item)
-  })
-}
-
-module.exports = {
-  emptyDirSync,
-  emptydirSync: emptyDirSync,
-  emptyDir,
-  emptydir: emptyDir
-}
-
-
-/***/ }),
-
-/***/ 13529:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const u = (__nccwpck_require__(95077).fromPromise)
-const path = __nccwpck_require__(16928)
-const fs = __nccwpck_require__(3506)
-const mkdir = __nccwpck_require__(31089)
-
-async function createFile (file) {
-  let stats
-  try {
-    stats = await fs.stat(file)
-  } catch { }
-  if (stats && stats.isFile()) return
-
-  const dir = path.dirname(file)
-
-  let dirStats = null
-  try {
-    dirStats = await fs.stat(dir)
-  } catch (err) {
-    // if the directory doesn't exist, make it
-    if (err.code === 'ENOENT') {
-      await mkdir.mkdirs(dir)
-      await fs.writeFile(file, '')
-      return
-    } else {
-      throw err
-    }
-  }
-
-  if (dirStats.isDirectory()) {
-    await fs.writeFile(file, '')
-  } else {
-    // parent is not a directory
-    // This is just to cause an internal ENOTDIR error to be thrown
-    await fs.readdir(dir)
-  }
-}
-
-function createFileSync (file) {
-  let stats
-  try {
-    stats = fs.statSync(file)
-  } catch { }
-  if (stats && stats.isFile()) return
-
-  const dir = path.dirname(file)
-  try {
-    if (!fs.statSync(dir).isDirectory()) {
-      // parent is not a directory
-      // This is just to cause an internal ENOTDIR error to be thrown
-      fs.readdirSync(dir)
-    }
-  } catch (err) {
-    // If the stat call above failed because the directory doesn't exist, create it
-    if (err && err.code === 'ENOENT') mkdir.mkdirsSync(dir)
-    else throw err
-  }
-
-  fs.writeFileSync(file, '')
-}
-
-module.exports = {
-  createFile: u(createFile),
-  createFileSync
-}
-
-
-/***/ }),
-
-/***/ 45779:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const { createFile, createFileSync } = __nccwpck_require__(13529)
-const { createLink, createLinkSync } = __nccwpck_require__(38751)
-const { createSymlink, createSymlinkSync } = __nccwpck_require__(84896)
-
-module.exports = {
-  // file
-  createFile,
-  createFileSync,
-  ensureFile: createFile,
-  ensureFileSync: createFileSync,
-  // link
-  createLink,
-  createLinkSync,
-  ensureLink: createLink,
-  ensureLinkSync: createLinkSync,
-  // symlink
-  createSymlink,
-  createSymlinkSync,
-  ensureSymlink: createSymlink,
-  ensureSymlinkSync: createSymlinkSync
-}
-
-
-/***/ }),
-
-/***/ 38751:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const u = (__nccwpck_require__(95077).fromPromise)
-const path = __nccwpck_require__(16928)
-const fs = __nccwpck_require__(3506)
-const mkdir = __nccwpck_require__(31089)
-const { pathExists } = __nccwpck_require__(52881)
-const { areIdentical } = __nccwpck_require__(90887)
-
-async function createLink (srcpath, dstpath) {
-  let dstStat
-  try {
-    dstStat = await fs.lstat(dstpath)
-  } catch {
-    // ignore error
-  }
-
-  let srcStat
-  try {
-    srcStat = await fs.lstat(srcpath)
-  } catch (err) {
-    err.message = err.message.replace('lstat', 'ensureLink')
-    throw err
-  }
-
-  if (dstStat && areIdentical(srcStat, dstStat)) return
-
-  const dir = path.dirname(dstpath)
-
-  const dirExists = await pathExists(dir)
-
-  if (!dirExists) {
-    await mkdir.mkdirs(dir)
-  }
-
-  await fs.link(srcpath, dstpath)
-}
-
-function createLinkSync (srcpath, dstpath) {
-  let dstStat
-  try {
-    dstStat = fs.lstatSync(dstpath)
-  } catch {}
-
-  try {
-    const srcStat = fs.lstatSync(srcpath)
-    if (dstStat && areIdentical(srcStat, dstStat)) return
-  } catch (err) {
-    err.message = err.message.replace('lstat', 'ensureLink')
-    throw err
-  }
-
-  const dir = path.dirname(dstpath)
-  const dirExists = fs.existsSync(dir)
-  if (dirExists) return fs.linkSync(srcpath, dstpath)
-  mkdir.mkdirsSync(dir)
-
-  return fs.linkSync(srcpath, dstpath)
-}
-
-module.exports = {
-  createLink: u(createLink),
-  createLinkSync
-}
-
-
-/***/ }),
-
-/***/ 83121:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const path = __nccwpck_require__(16928)
-const fs = __nccwpck_require__(3506)
-const { pathExists } = __nccwpck_require__(52881)
-
-const u = (__nccwpck_require__(95077).fromPromise)
-
-/**
- * Function that returns two types of paths, one relative to symlink, and one
- * relative to the current working directory. Checks if path is absolute or
- * relative. If the path is relative, this function checks if the path is
- * relative to symlink or relative to current working directory. This is an
- * initiative to find a smarter `srcpath` to supply when building symlinks.
- * This allows you to determine which path to use out of one of three possible
- * types of source paths. The first is an absolute path. This is detected by
- * `path.isAbsolute()`. When an absolute path is provided, it is checked to
- * see if it exists. If it does it's used, if not an error is returned
- * (callback)/ thrown (sync). The other two options for `srcpath` are a
- * relative url. By default Node's `fs.symlink` works by creating a symlink
- * using `dstpath` and expects the `srcpath` to be relative to the newly
- * created symlink. If you provide a `srcpath` that does not exist on the file
- * system it results in a broken symlink. To minimize this, the function
- * checks to see if the 'relative to symlink' source file exists, and if it
- * does it will use it. If it does not, it checks if there's a file that
- * exists that is relative to the current working directory, if does its used.
- * This preserves the expectations of the original fs.symlink spec and adds
- * the ability to pass in `relative to current working direcotry` paths.
- */
-
-async function symlinkPaths (srcpath, dstpath) {
-  if (path.isAbsolute(srcpath)) {
-    try {
-      await fs.lstat(srcpath)
-    } catch (err) {
-      err.message = err.message.replace('lstat', 'ensureSymlink')
-      throw err
-    }
-
-    return {
-      toCwd: srcpath,
-      toDst: srcpath
-    }
-  }
-
-  const dstdir = path.dirname(dstpath)
-  const relativeToDst = path.join(dstdir, srcpath)
-
-  const exists = await pathExists(relativeToDst)
-  if (exists) {
-    return {
-      toCwd: relativeToDst,
-      toDst: srcpath
-    }
-  }
-
-  try {
-    await fs.lstat(srcpath)
-  } catch (err) {
-    err.message = err.message.replace('lstat', 'ensureSymlink')
-    throw err
-  }
-
-  return {
-    toCwd: srcpath,
-    toDst: path.relative(dstdir, srcpath)
-  }
-}
-
-function symlinkPathsSync (srcpath, dstpath) {
-  if (path.isAbsolute(srcpath)) {
-    const exists = fs.existsSync(srcpath)
-    if (!exists) throw new Error('absolute srcpath does not exist')
-    return {
-      toCwd: srcpath,
-      toDst: srcpath
-    }
-  }
-
-  const dstdir = path.dirname(dstpath)
-  const relativeToDst = path.join(dstdir, srcpath)
-  const exists = fs.existsSync(relativeToDst)
-  if (exists) {
-    return {
-      toCwd: relativeToDst,
-      toDst: srcpath
-    }
-  }
-
-  const srcExists = fs.existsSync(srcpath)
-  if (!srcExists) throw new Error('relative srcpath does not exist')
-  return {
-    toCwd: srcpath,
-    toDst: path.relative(dstdir, srcpath)
-  }
-}
-
-module.exports = {
-  symlinkPaths: u(symlinkPaths),
-  symlinkPathsSync
-}
-
-
-/***/ }),
-
-/***/ 87045:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const fs = __nccwpck_require__(3506)
-const u = (__nccwpck_require__(95077).fromPromise)
-
-async function symlinkType (srcpath, type) {
-  if (type) return type
-
-  let stats
-  try {
-    stats = await fs.lstat(srcpath)
-  } catch {
-    return 'file'
-  }
-
-  return (stats && stats.isDirectory()) ? 'dir' : 'file'
-}
-
-function symlinkTypeSync (srcpath, type) {
-  if (type) return type
-
-  let stats
-  try {
-    stats = fs.lstatSync(srcpath)
-  } catch {
-    return 'file'
-  }
-  return (stats && stats.isDirectory()) ? 'dir' : 'file'
-}
-
-module.exports = {
-  symlinkType: u(symlinkType),
-  symlinkTypeSync
-}
-
-
-/***/ }),
-
-/***/ 84896:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const u = (__nccwpck_require__(95077).fromPromise)
-const path = __nccwpck_require__(16928)
-const fs = __nccwpck_require__(3506)
-
-const { mkdirs, mkdirsSync } = __nccwpck_require__(31089)
-
-const { symlinkPaths, symlinkPathsSync } = __nccwpck_require__(83121)
-const { symlinkType, symlinkTypeSync } = __nccwpck_require__(87045)
-
-const { pathExists } = __nccwpck_require__(52881)
-
-const { areIdentical } = __nccwpck_require__(90887)
-
-async function createSymlink (srcpath, dstpath, type) {
-  let stats
-  try {
-    stats = await fs.lstat(dstpath)
-  } catch { }
-
-  if (stats && stats.isSymbolicLink()) {
-    const [srcStat, dstStat] = await Promise.all([
-      fs.stat(srcpath),
-      fs.stat(dstpath)
-    ])
-
-    if (areIdentical(srcStat, dstStat)) return
-  }
-
-  const relative = await symlinkPaths(srcpath, dstpath)
-  srcpath = relative.toDst
-  const toType = await symlinkType(relative.toCwd, type)
-  const dir = path.dirname(dstpath)
-
-  if (!(await pathExists(dir))) {
-    await mkdirs(dir)
-  }
-
-  return fs.symlink(srcpath, dstpath, toType)
-}
-
-function createSymlinkSync (srcpath, dstpath, type) {
-  let stats
-  try {
-    stats = fs.lstatSync(dstpath)
-  } catch { }
-  if (stats && stats.isSymbolicLink()) {
-    const srcStat = fs.statSync(srcpath)
-    const dstStat = fs.statSync(dstpath)
-    if (areIdentical(srcStat, dstStat)) return
-  }
-
-  const relative = symlinkPathsSync(srcpath, dstpath)
-  srcpath = relative.toDst
-  type = symlinkTypeSync(relative.toCwd, type)
-  const dir = path.dirname(dstpath)
-  const exists = fs.existsSync(dir)
-  if (exists) return fs.symlinkSync(srcpath, dstpath, type)
-  mkdirsSync(dir)
-  return fs.symlinkSync(srcpath, dstpath, type)
-}
-
-module.exports = {
-  createSymlink: u(createSymlink),
-  createSymlinkSync
-}
-
-
-/***/ }),
-
-/***/ 3506:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-// This is adapted from https://github.com/normalize/mz
-// Copyright (c) 2014-2016 Jonathan Ong me@jongleberry.com and Contributors
-const u = (__nccwpck_require__(95077).fromCallback)
-const fs = __nccwpck_require__(35744)
-
-const api = [
-  'access',
-  'appendFile',
-  'chmod',
-  'chown',
-  'close',
-  'copyFile',
-  'fchmod',
-  'fchown',
-  'fdatasync',
-  'fstat',
-  'fsync',
-  'ftruncate',
-  'futimes',
-  'lchmod',
-  'lchown',
-  'link',
-  'lstat',
-  'mkdir',
-  'mkdtemp',
-  'open',
-  'opendir',
-  'readdir',
-  'readFile',
-  'readlink',
-  'realpath',
-  'rename',
-  'rm',
-  'rmdir',
-  'stat',
-  'symlink',
-  'truncate',
-  'unlink',
-  'utimes',
-  'writeFile'
-].filter(key => {
-  // Some commands are not available on some systems. Ex:
-  // fs.cp was added in Node.js v16.7.0
-  // fs.lchown is not available on at least some Linux
-  return typeof fs[key] === 'function'
-})
-
-// Export cloned fs:
-Object.assign(exports, fs)
-
-// Universalify async methods:
-api.forEach(method => {
-  exports[method] = u(fs[method])
-})
-
-// We differ from mz/fs in that we still ship the old, broken, fs.exists()
-// since we are a drop-in replacement for the native module
-exports.exists = function (filename, callback) {
-  if (typeof callback === 'function') {
-    return fs.exists(filename, callback)
-  }
-  return new Promise(resolve => {
-    return fs.exists(filename, resolve)
-  })
-}
-
-// fs.read(), fs.write(), fs.readv(), & fs.writev() need special treatment due to multiple callback args
-
-exports.read = function (fd, buffer, offset, length, position, callback) {
-  if (typeof callback === 'function') {
-    return fs.read(fd, buffer, offset, length, position, callback)
-  }
-  return new Promise((resolve, reject) => {
-    fs.read(fd, buffer, offset, length, position, (err, bytesRead, buffer) => {
-      if (err) return reject(err)
-      resolve({ bytesRead, buffer })
-    })
-  })
-}
-
-// Function signature can be
-// fs.write(fd, buffer[, offset[, length[, position]]], callback)
-// OR
-// fs.write(fd, string[, position[, encoding]], callback)
-// We need to handle both cases, so we use ...args
-exports.write = function (fd, buffer, ...args) {
-  if (typeof args[args.length - 1] === 'function') {
-    return fs.write(fd, buffer, ...args)
-  }
-
-  return new Promise((resolve, reject) => {
-    fs.write(fd, buffer, ...args, (err, bytesWritten, buffer) => {
-      if (err) return reject(err)
-      resolve({ bytesWritten, buffer })
-    })
-  })
-}
-
-// Function signature is
-// s.readv(fd, buffers[, position], callback)
-// We need to handle the optional arg, so we use ...args
-exports.readv = function (fd, buffers, ...args) {
-  if (typeof args[args.length - 1] === 'function') {
-    return fs.readv(fd, buffers, ...args)
-  }
-
-  return new Promise((resolve, reject) => {
-    fs.readv(fd, buffers, ...args, (err, bytesRead, buffers) => {
-      if (err) return reject(err)
-      resolve({ bytesRead, buffers })
-    })
-  })
-}
-
-// Function signature is
-// s.writev(fd, buffers[, position], callback)
-// We need to handle the optional arg, so we use ...args
-exports.writev = function (fd, buffers, ...args) {
-  if (typeof args[args.length - 1] === 'function') {
-    return fs.writev(fd, buffers, ...args)
-  }
-
-  return new Promise((resolve, reject) => {
-    fs.writev(fd, buffers, ...args, (err, bytesWritten, buffers) => {
-      if (err) return reject(err)
-      resolve({ bytesWritten, buffers })
-    })
-  })
-}
-
-// fs.realpath.native sometimes not available if fs is monkey-patched
-if (typeof fs.realpath.native === 'function') {
-  exports.realpath.native = u(fs.realpath.native)
-} else {
-  process.emitWarning(
-    'fs.realpath.native is not a function. Is fs being monkey-patched?',
-    'Warning', 'fs-extra-WARN0003'
-  )
-}
-
-
-/***/ }),
-
-/***/ 72136:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-module.exports = {
-  // Export promiseified graceful-fs:
-  ...__nccwpck_require__(3506),
-  // Export extra methods:
-  ...__nccwpck_require__(75796),
-  ...__nccwpck_require__(47882),
-  ...__nccwpck_require__(45779),
-  ...__nccwpck_require__(68471),
-  ...__nccwpck_require__(31089),
-  ...__nccwpck_require__(92076),
-  ...__nccwpck_require__(35229),
-  ...__nccwpck_require__(52881),
-  ...__nccwpck_require__(56205)
-}
-
-
-/***/ }),
-
-/***/ 68471:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const u = (__nccwpck_require__(95077).fromPromise)
-const jsonFile = __nccwpck_require__(86239)
-
-jsonFile.outputJson = u(__nccwpck_require__(3753))
-jsonFile.outputJsonSync = __nccwpck_require__(90425)
-// aliases
-jsonFile.outputJSON = jsonFile.outputJson
-jsonFile.outputJSONSync = jsonFile.outputJsonSync
-jsonFile.writeJSON = jsonFile.writeJson
-jsonFile.writeJSONSync = jsonFile.writeJsonSync
-jsonFile.readJSON = jsonFile.readJson
-jsonFile.readJSONSync = jsonFile.readJsonSync
-
-module.exports = jsonFile
-
-
-/***/ }),
-
-/***/ 86239:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const jsonFile = __nccwpck_require__(92064)
-
-module.exports = {
-  // jsonfile exports
-  readJson: jsonFile.readFile,
-  readJsonSync: jsonFile.readFileSync,
-  writeJson: jsonFile.writeFile,
-  writeJsonSync: jsonFile.writeFileSync
-}
-
-
-/***/ }),
-
-/***/ 90425:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const { stringify } = __nccwpck_require__(79449)
-const { outputFileSync } = __nccwpck_require__(35229)
-
-function outputJsonSync (file, data, options) {
-  const str = stringify(data, options)
-
-  outputFileSync(file, str, options)
-}
-
-module.exports = outputJsonSync
-
-
-/***/ }),
-
-/***/ 3753:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const { stringify } = __nccwpck_require__(79449)
-const { outputFile } = __nccwpck_require__(35229)
-
-async function outputJson (file, data, options = {}) {
-  const str = stringify(data, options)
-
-  await outputFile(file, str, options)
-}
-
-module.exports = outputJson
-
-
-/***/ }),
-
-/***/ 31089:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-const u = (__nccwpck_require__(95077).fromPromise)
-const { makeDir: _makeDir, makeDirSync } = __nccwpck_require__(89625)
-const makeDir = u(_makeDir)
-
-module.exports = {
-  mkdirs: makeDir,
-  mkdirsSync: makeDirSync,
-  // alias
-  mkdirp: makeDir,
-  mkdirpSync: makeDirSync,
-  ensureDir: makeDir,
-  ensureDirSync: makeDirSync
-}
-
-
-/***/ }),
-
-/***/ 89625:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-const fs = __nccwpck_require__(3506)
-const { checkPath } = __nccwpck_require__(83388)
-
-const getMode = options => {
-  const defaults = { mode: 0o777 }
-  if (typeof options === 'number') return options
-  return ({ ...defaults, ...options }).mode
-}
-
-module.exports.makeDir = async (dir, options) => {
-  checkPath(dir)
-
-  return fs.mkdir(dir, {
-    mode: getMode(options),
-    recursive: true
-  })
-}
-
-module.exports.makeDirSync = (dir, options) => {
-  checkPath(dir)
-
-  return fs.mkdirSync(dir, {
-    mode: getMode(options),
-    recursive: true
-  })
-}
-
-
-/***/ }),
-
-/***/ 83388:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-// Adapted from https://github.com/sindresorhus/make-dir
-// Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
-// Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-// The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-const path = __nccwpck_require__(16928)
-
-// https://github.com/nodejs/node/issues/8987
-// https://github.com/libuv/libuv/pull/1088
-module.exports.checkPath = function checkPath (pth) {
-  if (process.platform === 'win32') {
-    const pathHasInvalidWinCharacters = /[<>:"|?*]/.test(pth.replace(path.parse(pth).root, ''))
-
-    if (pathHasInvalidWinCharacters) {
-      const error = new Error(`Path contains invalid characters: ${pth}`)
-      error.code = 'EINVAL'
-      throw error
-    }
-  }
-}
-
-
-/***/ }),
-
-/***/ 92076:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const u = (__nccwpck_require__(95077).fromPromise)
-module.exports = {
-  move: u(__nccwpck_require__(47751)),
-  moveSync: __nccwpck_require__(89951)
-}
-
-
-/***/ }),
-
-/***/ 89951:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const fs = __nccwpck_require__(35744)
-const path = __nccwpck_require__(16928)
-const copySync = (__nccwpck_require__(75796).copySync)
-const removeSync = (__nccwpck_require__(56205).removeSync)
-const mkdirpSync = (__nccwpck_require__(31089).mkdirpSync)
-const stat = __nccwpck_require__(90887)
-
-function moveSync (src, dest, opts) {
-  opts = opts || {}
-  const overwrite = opts.overwrite || opts.clobber || false
-
-  const { srcStat, isChangingCase = false } = stat.checkPathsSync(src, dest, 'move', opts)
-  stat.checkParentPathsSync(src, srcStat, dest, 'move')
-  if (!isParentRoot(dest)) mkdirpSync(path.dirname(dest))
-  return doRename(src, dest, overwrite, isChangingCase)
-}
-
-function isParentRoot (dest) {
-  const parent = path.dirname(dest)
-  const parsedPath = path.parse(parent)
-  return parsedPath.root === parent
-}
-
-function doRename (src, dest, overwrite, isChangingCase) {
-  if (isChangingCase) return rename(src, dest, overwrite)
-  if (overwrite) {
-    removeSync(dest)
-    return rename(src, dest, overwrite)
-  }
-  if (fs.existsSync(dest)) throw new Error('dest already exists.')
-  return rename(src, dest, overwrite)
-}
-
-function rename (src, dest, overwrite) {
-  try {
-    fs.renameSync(src, dest)
-  } catch (err) {
-    if (err.code !== 'EXDEV') throw err
-    return moveAcrossDevice(src, dest, overwrite)
-  }
-}
-
-function moveAcrossDevice (src, dest, overwrite) {
-  const opts = {
-    overwrite,
-    errorOnExist: true,
-    preserveTimestamps: true
-  }
-  copySync(src, dest, opts)
-  return removeSync(src)
-}
-
-module.exports = moveSync
-
-
-/***/ }),
-
-/***/ 47751:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const fs = __nccwpck_require__(3506)
-const path = __nccwpck_require__(16928)
-const { copy } = __nccwpck_require__(75796)
-const { remove } = __nccwpck_require__(56205)
-const { mkdirp } = __nccwpck_require__(31089)
-const { pathExists } = __nccwpck_require__(52881)
-const stat = __nccwpck_require__(90887)
-
-async function move (src, dest, opts = {}) {
-  const overwrite = opts.overwrite || opts.clobber || false
-
-  const { srcStat, isChangingCase = false } = await stat.checkPaths(src, dest, 'move', opts)
-
-  await stat.checkParentPaths(src, srcStat, dest, 'move')
-
-  // If the parent of dest is not root, make sure it exists before proceeding
-  const destParent = path.dirname(dest)
-  const parsedParentPath = path.parse(destParent)
-  if (parsedParentPath.root !== destParent) {
-    await mkdirp(destParent)
-  }
-
-  return doRename(src, dest, overwrite, isChangingCase)
-}
-
-async function doRename (src, dest, overwrite, isChangingCase) {
-  if (!isChangingCase) {
-    if (overwrite) {
-      await remove(dest)
-    } else if (await pathExists(dest)) {
-      throw new Error('dest already exists.')
-    }
-  }
-
-  try {
-    // Try w/ rename first, and try copy + remove if EXDEV
-    await fs.rename(src, dest)
-  } catch (err) {
-    if (err.code !== 'EXDEV') {
-      throw err
-    }
-    await moveAcrossDevice(src, dest, overwrite)
-  }
-}
-
-async function moveAcrossDevice (src, dest, overwrite) {
-  const opts = {
-    overwrite,
-    errorOnExist: true,
-    preserveTimestamps: true
-  }
-
-  await copy(src, dest, opts)
-  return remove(src)
-}
-
-module.exports = move
-
-
-/***/ }),
-
-/***/ 35229:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const u = (__nccwpck_require__(95077).fromPromise)
-const fs = __nccwpck_require__(3506)
-const path = __nccwpck_require__(16928)
-const mkdir = __nccwpck_require__(31089)
-const pathExists = (__nccwpck_require__(52881).pathExists)
-
-async function outputFile (file, data, encoding = 'utf-8') {
-  const dir = path.dirname(file)
-
-  if (!(await pathExists(dir))) {
-    await mkdir.mkdirs(dir)
-  }
-
-  return fs.writeFile(file, data, encoding)
-}
-
-function outputFileSync (file, ...args) {
-  const dir = path.dirname(file)
-  if (!fs.existsSync(dir)) {
-    mkdir.mkdirsSync(dir)
-  }
-
-  fs.writeFileSync(file, ...args)
-}
-
-module.exports = {
-  outputFile: u(outputFile),
-  outputFileSync
-}
-
-
-/***/ }),
-
-/***/ 52881:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-const u = (__nccwpck_require__(95077).fromPromise)
-const fs = __nccwpck_require__(3506)
-
-function pathExists (path) {
-  return fs.access(path).then(() => true).catch(() => false)
-}
-
-module.exports = {
-  pathExists: u(pathExists),
-  pathExistsSync: fs.existsSync
-}
-
-
-/***/ }),
-
-/***/ 56205:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const fs = __nccwpck_require__(35744)
-const u = (__nccwpck_require__(95077).fromCallback)
-
-function remove (path, callback) {
-  fs.rm(path, { recursive: true, force: true }, callback)
-}
-
-function removeSync (path) {
-  fs.rmSync(path, { recursive: true, force: true })
-}
-
-module.exports = {
-  remove: u(remove),
-  removeSync
-}
-
-
-/***/ }),
-
-/***/ 90887:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const fs = __nccwpck_require__(3506)
-const path = __nccwpck_require__(16928)
-const u = (__nccwpck_require__(95077).fromPromise)
-
-function getStats (src, dest, opts) {
-  const statFunc = opts.dereference
-    ? (file) => fs.stat(file, { bigint: true })
-    : (file) => fs.lstat(file, { bigint: true })
-  return Promise.all([
-    statFunc(src),
-    statFunc(dest).catch(err => {
-      if (err.code === 'ENOENT') return null
-      throw err
-    })
-  ]).then(([srcStat, destStat]) => ({ srcStat, destStat }))
-}
-
-function getStatsSync (src, dest, opts) {
-  let destStat
-  const statFunc = opts.dereference
-    ? (file) => fs.statSync(file, { bigint: true })
-    : (file) => fs.lstatSync(file, { bigint: true })
-  const srcStat = statFunc(src)
-  try {
-    destStat = statFunc(dest)
-  } catch (err) {
-    if (err.code === 'ENOENT') return { srcStat, destStat: null }
-    throw err
-  }
-  return { srcStat, destStat }
-}
-
-async function checkPaths (src, dest, funcName, opts) {
-  const { srcStat, destStat } = await getStats(src, dest, opts)
-  if (destStat) {
-    if (areIdentical(srcStat, destStat)) {
-      const srcBaseName = path.basename(src)
-      const destBaseName = path.basename(dest)
-      if (funcName === 'move' &&
-        srcBaseName !== destBaseName &&
-        srcBaseName.toLowerCase() === destBaseName.toLowerCase()) {
-        return { srcStat, destStat, isChangingCase: true }
-      }
-      throw new Error('Source and destination must not be the same.')
-    }
-    if (srcStat.isDirectory() && !destStat.isDirectory()) {
-      throw new Error(`Cannot overwrite non-directory '${dest}' with directory '${src}'.`)
-    }
-    if (!srcStat.isDirectory() && destStat.isDirectory()) {
-      throw new Error(`Cannot overwrite directory '${dest}' with non-directory '${src}'.`)
-    }
-  }
-
-  if (srcStat.isDirectory() && isSrcSubdir(src, dest)) {
-    throw new Error(errMsg(src, dest, funcName))
-  }
-
-  return { srcStat, destStat }
-}
-
-function checkPathsSync (src, dest, funcName, opts) {
-  const { srcStat, destStat } = getStatsSync(src, dest, opts)
-
-  if (destStat) {
-    if (areIdentical(srcStat, destStat)) {
-      const srcBaseName = path.basename(src)
-      const destBaseName = path.basename(dest)
-      if (funcName === 'move' &&
-        srcBaseName !== destBaseName &&
-        srcBaseName.toLowerCase() === destBaseName.toLowerCase()) {
-        return { srcStat, destStat, isChangingCase: true }
-      }
-      throw new Error('Source and destination must not be the same.')
-    }
-    if (srcStat.isDirectory() && !destStat.isDirectory()) {
-      throw new Error(`Cannot overwrite non-directory '${dest}' with directory '${src}'.`)
-    }
-    if (!srcStat.isDirectory() && destStat.isDirectory()) {
-      throw new Error(`Cannot overwrite directory '${dest}' with non-directory '${src}'.`)
-    }
-  }
-
-  if (srcStat.isDirectory() && isSrcSubdir(src, dest)) {
-    throw new Error(errMsg(src, dest, funcName))
-  }
-  return { srcStat, destStat }
-}
-
-// recursively check if dest parent is a subdirectory of src.
-// It works for all file types including symlinks since it
-// checks the src and dest inodes. It starts from the deepest
-// parent and stops once it reaches the src parent or the root path.
-async function checkParentPaths (src, srcStat, dest, funcName) {
-  const srcParent = path.resolve(path.dirname(src))
-  const destParent = path.resolve(path.dirname(dest))
-  if (destParent === srcParent || destParent === path.parse(destParent).root) return
-
-  let destStat
-  try {
-    destStat = await fs.stat(destParent, { bigint: true })
-  } catch (err) {
-    if (err.code === 'ENOENT') return
-    throw err
-  }
-
-  if (areIdentical(srcStat, destStat)) {
-    throw new Error(errMsg(src, dest, funcName))
-  }
-
-  return checkParentPaths(src, srcStat, destParent, funcName)
-}
-
-function checkParentPathsSync (src, srcStat, dest, funcName) {
-  const srcParent = path.resolve(path.dirname(src))
-  const destParent = path.resolve(path.dirname(dest))
-  if (destParent === srcParent || destParent === path.parse(destParent).root) return
-  let destStat
-  try {
-    destStat = fs.statSync(destParent, { bigint: true })
-  } catch (err) {
-    if (err.code === 'ENOENT') return
-    throw err
-  }
-  if (areIdentical(srcStat, destStat)) {
-    throw new Error(errMsg(src, dest, funcName))
-  }
-  return checkParentPathsSync(src, srcStat, destParent, funcName)
-}
-
-function areIdentical (srcStat, destStat) {
-  return destStat.ino && destStat.dev && destStat.ino === srcStat.ino && destStat.dev === srcStat.dev
-}
-
-// return true if dest is a subdir of src, otherwise false.
-// It only checks the path strings.
-function isSrcSubdir (src, dest) {
-  const srcArr = path.resolve(src).split(path.sep).filter(i => i)
-  const destArr = path.resolve(dest).split(path.sep).filter(i => i)
-  return srcArr.every((cur, i) => destArr[i] === cur)
-}
-
-function errMsg (src, dest, funcName) {
-  return `Cannot ${funcName} '${src}' to a subdirectory of itself, '${dest}'.`
-}
-
-module.exports = {
-  // checkPaths
-  checkPaths: u(checkPaths),
-  checkPathsSync,
-  // checkParent
-  checkParentPaths: u(checkParentPaths),
-  checkParentPathsSync,
-  // Misc
-  isSrcSubdir,
-  areIdentical
-}
-
-
-/***/ }),
-
-/***/ 96934:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-const fs = __nccwpck_require__(3506)
-const u = (__nccwpck_require__(95077).fromPromise)
-
-async function utimesMillis (path, atime, mtime) {
-  // if (!HAS_MILLIS_RES) return fs.utimes(path, atime, mtime, callback)
-  const fd = await fs.open(path, 'r+')
-
-  let closeErr = null
-
-  try {
-    await fs.futimes(fd, atime, mtime)
-  } finally {
-    try {
-      await fs.close(fd)
-    } catch (e) {
-      closeErr = e
-    }
-  }
-
-  if (closeErr) {
-    throw closeErr
-  }
-}
-
-function utimesMillisSync (path, atime, mtime) {
-  const fd = fs.openSync(path, 'r+')
-  fs.futimesSync(fd, atime, mtime)
-  return fs.closeSync(fd)
-}
-
-module.exports = {
-  utimesMillis: u(utimesMillis),
-  utimesMillisSync
-}
-
-
-/***/ }),
-
 /***/ 93869:
 /***/ ((module) => {
 
@@ -39758,7 +36418,6 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.file = void 0;
 const debug_1 = __importDefault(__nccwpck_require__(2830));
 const fs_1 = __nccwpck_require__(79896);
-const fs_extra_1 = __nccwpck_require__(72136);
 const notfound_1 = __importDefault(__nccwpck_require__(53161));
 const notmodified_1 = __importDefault(__nccwpck_require__(12402));
 const url_1 = __nccwpck_require__(87016);
@@ -39775,18 +36434,19 @@ const file = async ({ href: uri }, opts = {}) => {
         debug('Normalized pathname: %o', filepath);
         // `open()` first to get a file descriptor and ensure that the file
         // exists.
-        const fd = await (0, fs_extra_1.open)(filepath, flags, mode);
-        // Now `fstat()` to check the `mtime` and store the stat object for
-        // the cache.
-        const stat = await (0, fs_extra_1.fstat)(fd);
+        const fdHandle = await fs_1.promises.open(filepath, flags, mode);
+        // extract the numeric file descriptor
+        const fd = fdHandle.fd;
+        // store the stat object for the cache.
+        const stat = await fdHandle.stat();
         // if a `cache` was provided, check if the file has not been modified
         if (cache && cache.stat && stat && isNotModified(cache.stat, stat)) {
+            await fdHandle.close();
             throw new notmodified_1.default();
         }
         // `fs.ReadStream` takes care of calling `fs.close()` on the
         // fd after it's done reading
-        // @ts-expect-error `@types/node` doesn't allow `null` as file path :/
-        const rs = (0, fs_1.createReadStream)(null, {
+        const rs = (0, fs_1.createReadStream)(filepath, {
             autoClose: true,
             ...opts,
             fd,
@@ -40189,10 +36849,10 @@ exports.isValidProtocol = isValidProtocol;
  *
  * For caching purposes, you can pass in a `stream` instance from a previous
  * `getUri()` call as a `cache: stream` option, and if the destination has
- * not changed since the last time the endpoint was retreived then the callback
+ * not changed since the last time the endpoint was retrieved then the callback
  * will be invoked with an Error object with `code` set to "ENOTMODIFIED" and
  * `null` for the "stream" instance argument. In this case, you can skip
- * retreiving the file again and continue to use the previous payload.
+ * retrieving the file again and continue to use the previous payload.
  *
  * @param {String} uri URI to retrieve
  * @param {Object} opts optional "options" object
@@ -40261,979 +36921,6 @@ class NotModifiedError extends Error {
 }
 exports["default"] = NotModifiedError;
 //# sourceMappingURL=notmodified.js.map
-
-/***/ }),
-
-/***/ 73964:
-/***/ ((module) => {
-
-"use strict";
-
-
-module.exports = clone
-
-var getPrototypeOf = Object.getPrototypeOf || function (obj) {
-  return obj.__proto__
-}
-
-function clone (obj) {
-  if (obj === null || typeof obj !== 'object')
-    return obj
-
-  if (obj instanceof Object)
-    var copy = { __proto__: getPrototypeOf(obj) }
-  else
-    var copy = Object.create(null)
-
-  Object.getOwnPropertyNames(obj).forEach(function (key) {
-    Object.defineProperty(copy, key, Object.getOwnPropertyDescriptor(obj, key))
-  })
-
-  return copy
-}
-
-
-/***/ }),
-
-/***/ 35744:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-var fs = __nccwpck_require__(79896)
-var polyfills = __nccwpck_require__(83501)
-var legacy = __nccwpck_require__(12270)
-var clone = __nccwpck_require__(73964)
-
-var util = __nccwpck_require__(39023)
-
-/* istanbul ignore next - node 0.x polyfill */
-var gracefulQueue
-var previousSymbol
-
-/* istanbul ignore else - node 0.x polyfill */
-if (typeof Symbol === 'function' && typeof Symbol.for === 'function') {
-  gracefulQueue = Symbol.for('graceful-fs.queue')
-  // This is used in testing by future versions
-  previousSymbol = Symbol.for('graceful-fs.previous')
-} else {
-  gracefulQueue = '___graceful-fs.queue'
-  previousSymbol = '___graceful-fs.previous'
-}
-
-function noop () {}
-
-function publishQueue(context, queue) {
-  Object.defineProperty(context, gracefulQueue, {
-    get: function() {
-      return queue
-    }
-  })
-}
-
-var debug = noop
-if (util.debuglog)
-  debug = util.debuglog('gfs4')
-else if (/\bgfs4\b/i.test(process.env.NODE_DEBUG || ''))
-  debug = function() {
-    var m = util.format.apply(util, arguments)
-    m = 'GFS4: ' + m.split(/\n/).join('\nGFS4: ')
-    console.error(m)
-  }
-
-// Once time initialization
-if (!fs[gracefulQueue]) {
-  // This queue can be shared by multiple loaded instances
-  var queue = global[gracefulQueue] || []
-  publishQueue(fs, queue)
-
-  // Patch fs.close/closeSync to shared queue version, because we need
-  // to retry() whenever a close happens *anywhere* in the program.
-  // This is essential when multiple graceful-fs instances are
-  // in play at the same time.
-  fs.close = (function (fs$close) {
-    function close (fd, cb) {
-      return fs$close.call(fs, fd, function (err) {
-        // This function uses the graceful-fs shared queue
-        if (!err) {
-          resetQueue()
-        }
-
-        if (typeof cb === 'function')
-          cb.apply(this, arguments)
-      })
-    }
-
-    Object.defineProperty(close, previousSymbol, {
-      value: fs$close
-    })
-    return close
-  })(fs.close)
-
-  fs.closeSync = (function (fs$closeSync) {
-    function closeSync (fd) {
-      // This function uses the graceful-fs shared queue
-      fs$closeSync.apply(fs, arguments)
-      resetQueue()
-    }
-
-    Object.defineProperty(closeSync, previousSymbol, {
-      value: fs$closeSync
-    })
-    return closeSync
-  })(fs.closeSync)
-
-  if (/\bgfs4\b/i.test(process.env.NODE_DEBUG || '')) {
-    process.on('exit', function() {
-      debug(fs[gracefulQueue])
-      __nccwpck_require__(42613).equal(fs[gracefulQueue].length, 0)
-    })
-  }
-}
-
-if (!global[gracefulQueue]) {
-  publishQueue(global, fs[gracefulQueue]);
-}
-
-module.exports = patch(clone(fs))
-if (process.env.TEST_GRACEFUL_FS_GLOBAL_PATCH && !fs.__patched) {
-    module.exports = patch(fs)
-    fs.__patched = true;
-}
-
-function patch (fs) {
-  // Everything that references the open() function needs to be in here
-  polyfills(fs)
-  fs.gracefulify = patch
-
-  fs.createReadStream = createReadStream
-  fs.createWriteStream = createWriteStream
-  var fs$readFile = fs.readFile
-  fs.readFile = readFile
-  function readFile (path, options, cb) {
-    if (typeof options === 'function')
-      cb = options, options = null
-
-    return go$readFile(path, options, cb)
-
-    function go$readFile (path, options, cb, startTime) {
-      return fs$readFile(path, options, function (err) {
-        if (err && (err.code === 'EMFILE' || err.code === 'ENFILE'))
-          enqueue([go$readFile, [path, options, cb], err, startTime || Date.now(), Date.now()])
-        else {
-          if (typeof cb === 'function')
-            cb.apply(this, arguments)
-        }
-      })
-    }
-  }
-
-  var fs$writeFile = fs.writeFile
-  fs.writeFile = writeFile
-  function writeFile (path, data, options, cb) {
-    if (typeof options === 'function')
-      cb = options, options = null
-
-    return go$writeFile(path, data, options, cb)
-
-    function go$writeFile (path, data, options, cb, startTime) {
-      return fs$writeFile(path, data, options, function (err) {
-        if (err && (err.code === 'EMFILE' || err.code === 'ENFILE'))
-          enqueue([go$writeFile, [path, data, options, cb], err, startTime || Date.now(), Date.now()])
-        else {
-          if (typeof cb === 'function')
-            cb.apply(this, arguments)
-        }
-      })
-    }
-  }
-
-  var fs$appendFile = fs.appendFile
-  if (fs$appendFile)
-    fs.appendFile = appendFile
-  function appendFile (path, data, options, cb) {
-    if (typeof options === 'function')
-      cb = options, options = null
-
-    return go$appendFile(path, data, options, cb)
-
-    function go$appendFile (path, data, options, cb, startTime) {
-      return fs$appendFile(path, data, options, function (err) {
-        if (err && (err.code === 'EMFILE' || err.code === 'ENFILE'))
-          enqueue([go$appendFile, [path, data, options, cb], err, startTime || Date.now(), Date.now()])
-        else {
-          if (typeof cb === 'function')
-            cb.apply(this, arguments)
-        }
-      })
-    }
-  }
-
-  var fs$copyFile = fs.copyFile
-  if (fs$copyFile)
-    fs.copyFile = copyFile
-  function copyFile (src, dest, flags, cb) {
-    if (typeof flags === 'function') {
-      cb = flags
-      flags = 0
-    }
-    return go$copyFile(src, dest, flags, cb)
-
-    function go$copyFile (src, dest, flags, cb, startTime) {
-      return fs$copyFile(src, dest, flags, function (err) {
-        if (err && (err.code === 'EMFILE' || err.code === 'ENFILE'))
-          enqueue([go$copyFile, [src, dest, flags, cb], err, startTime || Date.now(), Date.now()])
-        else {
-          if (typeof cb === 'function')
-            cb.apply(this, arguments)
-        }
-      })
-    }
-  }
-
-  var fs$readdir = fs.readdir
-  fs.readdir = readdir
-  var noReaddirOptionVersions = /^v[0-5]\./
-  function readdir (path, options, cb) {
-    if (typeof options === 'function')
-      cb = options, options = null
-
-    var go$readdir = noReaddirOptionVersions.test(process.version)
-      ? function go$readdir (path, options, cb, startTime) {
-        return fs$readdir(path, fs$readdirCallback(
-          path, options, cb, startTime
-        ))
-      }
-      : function go$readdir (path, options, cb, startTime) {
-        return fs$readdir(path, options, fs$readdirCallback(
-          path, options, cb, startTime
-        ))
-      }
-
-    return go$readdir(path, options, cb)
-
-    function fs$readdirCallback (path, options, cb, startTime) {
-      return function (err, files) {
-        if (err && (err.code === 'EMFILE' || err.code === 'ENFILE'))
-          enqueue([
-            go$readdir,
-            [path, options, cb],
-            err,
-            startTime || Date.now(),
-            Date.now()
-          ])
-        else {
-          if (files && files.sort)
-            files.sort()
-
-          if (typeof cb === 'function')
-            cb.call(this, err, files)
-        }
-      }
-    }
-  }
-
-  if (process.version.substr(0, 4) === 'v0.8') {
-    var legStreams = legacy(fs)
-    ReadStream = legStreams.ReadStream
-    WriteStream = legStreams.WriteStream
-  }
-
-  var fs$ReadStream = fs.ReadStream
-  if (fs$ReadStream) {
-    ReadStream.prototype = Object.create(fs$ReadStream.prototype)
-    ReadStream.prototype.open = ReadStream$open
-  }
-
-  var fs$WriteStream = fs.WriteStream
-  if (fs$WriteStream) {
-    WriteStream.prototype = Object.create(fs$WriteStream.prototype)
-    WriteStream.prototype.open = WriteStream$open
-  }
-
-  Object.defineProperty(fs, 'ReadStream', {
-    get: function () {
-      return ReadStream
-    },
-    set: function (val) {
-      ReadStream = val
-    },
-    enumerable: true,
-    configurable: true
-  })
-  Object.defineProperty(fs, 'WriteStream', {
-    get: function () {
-      return WriteStream
-    },
-    set: function (val) {
-      WriteStream = val
-    },
-    enumerable: true,
-    configurable: true
-  })
-
-  // legacy names
-  var FileReadStream = ReadStream
-  Object.defineProperty(fs, 'FileReadStream', {
-    get: function () {
-      return FileReadStream
-    },
-    set: function (val) {
-      FileReadStream = val
-    },
-    enumerable: true,
-    configurable: true
-  })
-  var FileWriteStream = WriteStream
-  Object.defineProperty(fs, 'FileWriteStream', {
-    get: function () {
-      return FileWriteStream
-    },
-    set: function (val) {
-      FileWriteStream = val
-    },
-    enumerable: true,
-    configurable: true
-  })
-
-  function ReadStream (path, options) {
-    if (this instanceof ReadStream)
-      return fs$ReadStream.apply(this, arguments), this
-    else
-      return ReadStream.apply(Object.create(ReadStream.prototype), arguments)
-  }
-
-  function ReadStream$open () {
-    var that = this
-    open(that.path, that.flags, that.mode, function (err, fd) {
-      if (err) {
-        if (that.autoClose)
-          that.destroy()
-
-        that.emit('error', err)
-      } else {
-        that.fd = fd
-        that.emit('open', fd)
-        that.read()
-      }
-    })
-  }
-
-  function WriteStream (path, options) {
-    if (this instanceof WriteStream)
-      return fs$WriteStream.apply(this, arguments), this
-    else
-      return WriteStream.apply(Object.create(WriteStream.prototype), arguments)
-  }
-
-  function WriteStream$open () {
-    var that = this
-    open(that.path, that.flags, that.mode, function (err, fd) {
-      if (err) {
-        that.destroy()
-        that.emit('error', err)
-      } else {
-        that.fd = fd
-        that.emit('open', fd)
-      }
-    })
-  }
-
-  function createReadStream (path, options) {
-    return new fs.ReadStream(path, options)
-  }
-
-  function createWriteStream (path, options) {
-    return new fs.WriteStream(path, options)
-  }
-
-  var fs$open = fs.open
-  fs.open = open
-  function open (path, flags, mode, cb) {
-    if (typeof mode === 'function')
-      cb = mode, mode = null
-
-    return go$open(path, flags, mode, cb)
-
-    function go$open (path, flags, mode, cb, startTime) {
-      return fs$open(path, flags, mode, function (err, fd) {
-        if (err && (err.code === 'EMFILE' || err.code === 'ENFILE'))
-          enqueue([go$open, [path, flags, mode, cb], err, startTime || Date.now(), Date.now()])
-        else {
-          if (typeof cb === 'function')
-            cb.apply(this, arguments)
-        }
-      })
-    }
-  }
-
-  return fs
-}
-
-function enqueue (elem) {
-  debug('ENQUEUE', elem[0].name, elem[1])
-  fs[gracefulQueue].push(elem)
-  retry()
-}
-
-// keep track of the timeout between retry() calls
-var retryTimer
-
-// reset the startTime and lastTime to now
-// this resets the start of the 60 second overall timeout as well as the
-// delay between attempts so that we'll retry these jobs sooner
-function resetQueue () {
-  var now = Date.now()
-  for (var i = 0; i < fs[gracefulQueue].length; ++i) {
-    // entries that are only a length of 2 are from an older version, don't
-    // bother modifying those since they'll be retried anyway.
-    if (fs[gracefulQueue][i].length > 2) {
-      fs[gracefulQueue][i][3] = now // startTime
-      fs[gracefulQueue][i][4] = now // lastTime
-    }
-  }
-  // call retry to make sure we're actively processing the queue
-  retry()
-}
-
-function retry () {
-  // clear the timer and remove it to help prevent unintended concurrency
-  clearTimeout(retryTimer)
-  retryTimer = undefined
-
-  if (fs[gracefulQueue].length === 0)
-    return
-
-  var elem = fs[gracefulQueue].shift()
-  var fn = elem[0]
-  var args = elem[1]
-  // these items may be unset if they were added by an older graceful-fs
-  var err = elem[2]
-  var startTime = elem[3]
-  var lastTime = elem[4]
-
-  // if we don't have a startTime we have no way of knowing if we've waited
-  // long enough, so go ahead and retry this item now
-  if (startTime === undefined) {
-    debug('RETRY', fn.name, args)
-    fn.apply(null, args)
-  } else if (Date.now() - startTime >= 60000) {
-    // it's been more than 60 seconds total, bail now
-    debug('TIMEOUT', fn.name, args)
-    var cb = args.pop()
-    if (typeof cb === 'function')
-      cb.call(null, err)
-  } else {
-    // the amount of time between the last attempt and right now
-    var sinceAttempt = Date.now() - lastTime
-    // the amount of time between when we first tried, and when we last tried
-    // rounded up to at least 1
-    var sinceStart = Math.max(lastTime - startTime, 1)
-    // backoff. wait longer than the total time we've been retrying, but only
-    // up to a maximum of 100ms
-    var desiredDelay = Math.min(sinceStart * 1.2, 100)
-    // it's been long enough since the last retry, do it again
-    if (sinceAttempt >= desiredDelay) {
-      debug('RETRY', fn.name, args)
-      fn.apply(null, args.concat([startTime]))
-    } else {
-      // if we can't do this job yet, push it to the end of the queue
-      // and let the next iteration check again
-      fs[gracefulQueue].push(elem)
-    }
-  }
-
-  // schedule our next run if one isn't already scheduled
-  if (retryTimer === undefined) {
-    retryTimer = setTimeout(retry, 0)
-  }
-}
-
-
-/***/ }),
-
-/***/ 12270:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-var Stream = (__nccwpck_require__(2203).Stream)
-
-module.exports = legacy
-
-function legacy (fs) {
-  return {
-    ReadStream: ReadStream,
-    WriteStream: WriteStream
-  }
-
-  function ReadStream (path, options) {
-    if (!(this instanceof ReadStream)) return new ReadStream(path, options);
-
-    Stream.call(this);
-
-    var self = this;
-
-    this.path = path;
-    this.fd = null;
-    this.readable = true;
-    this.paused = false;
-
-    this.flags = 'r';
-    this.mode = 438; /*=0666*/
-    this.bufferSize = 64 * 1024;
-
-    options = options || {};
-
-    // Mixin options into this
-    var keys = Object.keys(options);
-    for (var index = 0, length = keys.length; index < length; index++) {
-      var key = keys[index];
-      this[key] = options[key];
-    }
-
-    if (this.encoding) this.setEncoding(this.encoding);
-
-    if (this.start !== undefined) {
-      if ('number' !== typeof this.start) {
-        throw TypeError('start must be a Number');
-      }
-      if (this.end === undefined) {
-        this.end = Infinity;
-      } else if ('number' !== typeof this.end) {
-        throw TypeError('end must be a Number');
-      }
-
-      if (this.start > this.end) {
-        throw new Error('start must be <= end');
-      }
-
-      this.pos = this.start;
-    }
-
-    if (this.fd !== null) {
-      process.nextTick(function() {
-        self._read();
-      });
-      return;
-    }
-
-    fs.open(this.path, this.flags, this.mode, function (err, fd) {
-      if (err) {
-        self.emit('error', err);
-        self.readable = false;
-        return;
-      }
-
-      self.fd = fd;
-      self.emit('open', fd);
-      self._read();
-    })
-  }
-
-  function WriteStream (path, options) {
-    if (!(this instanceof WriteStream)) return new WriteStream(path, options);
-
-    Stream.call(this);
-
-    this.path = path;
-    this.fd = null;
-    this.writable = true;
-
-    this.flags = 'w';
-    this.encoding = 'binary';
-    this.mode = 438; /*=0666*/
-    this.bytesWritten = 0;
-
-    options = options || {};
-
-    // Mixin options into this
-    var keys = Object.keys(options);
-    for (var index = 0, length = keys.length; index < length; index++) {
-      var key = keys[index];
-      this[key] = options[key];
-    }
-
-    if (this.start !== undefined) {
-      if ('number' !== typeof this.start) {
-        throw TypeError('start must be a Number');
-      }
-      if (this.start < 0) {
-        throw new Error('start must be >= zero');
-      }
-
-      this.pos = this.start;
-    }
-
-    this.busy = false;
-    this._queue = [];
-
-    if (this.fd === null) {
-      this._open = fs.open;
-      this._queue.push([this._open, this.path, this.flags, this.mode, undefined]);
-      this.flush();
-    }
-  }
-}
-
-
-/***/ }),
-
-/***/ 83501:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-var constants = __nccwpck_require__(49140)
-
-var origCwd = process.cwd
-var cwd = null
-
-var platform = process.env.GRACEFUL_FS_PLATFORM || process.platform
-
-process.cwd = function() {
-  if (!cwd)
-    cwd = origCwd.call(process)
-  return cwd
-}
-try {
-  process.cwd()
-} catch (er) {}
-
-// This check is needed until node.js 12 is required
-if (typeof process.chdir === 'function') {
-  var chdir = process.chdir
-  process.chdir = function (d) {
-    cwd = null
-    chdir.call(process, d)
-  }
-  if (Object.setPrototypeOf) Object.setPrototypeOf(process.chdir, chdir)
-}
-
-module.exports = patch
-
-function patch (fs) {
-  // (re-)implement some things that are known busted or missing.
-
-  // lchmod, broken prior to 0.6.2
-  // back-port the fix here.
-  if (constants.hasOwnProperty('O_SYMLINK') &&
-      process.version.match(/^v0\.6\.[0-2]|^v0\.5\./)) {
-    patchLchmod(fs)
-  }
-
-  // lutimes implementation, or no-op
-  if (!fs.lutimes) {
-    patchLutimes(fs)
-  }
-
-  // https://github.com/isaacs/node-graceful-fs/issues/4
-  // Chown should not fail on einval or eperm if non-root.
-  // It should not fail on enosys ever, as this just indicates
-  // that a fs doesn't support the intended operation.
-
-  fs.chown = chownFix(fs.chown)
-  fs.fchown = chownFix(fs.fchown)
-  fs.lchown = chownFix(fs.lchown)
-
-  fs.chmod = chmodFix(fs.chmod)
-  fs.fchmod = chmodFix(fs.fchmod)
-  fs.lchmod = chmodFix(fs.lchmod)
-
-  fs.chownSync = chownFixSync(fs.chownSync)
-  fs.fchownSync = chownFixSync(fs.fchownSync)
-  fs.lchownSync = chownFixSync(fs.lchownSync)
-
-  fs.chmodSync = chmodFixSync(fs.chmodSync)
-  fs.fchmodSync = chmodFixSync(fs.fchmodSync)
-  fs.lchmodSync = chmodFixSync(fs.lchmodSync)
-
-  fs.stat = statFix(fs.stat)
-  fs.fstat = statFix(fs.fstat)
-  fs.lstat = statFix(fs.lstat)
-
-  fs.statSync = statFixSync(fs.statSync)
-  fs.fstatSync = statFixSync(fs.fstatSync)
-  fs.lstatSync = statFixSync(fs.lstatSync)
-
-  // if lchmod/lchown do not exist, then make them no-ops
-  if (fs.chmod && !fs.lchmod) {
-    fs.lchmod = function (path, mode, cb) {
-      if (cb) process.nextTick(cb)
-    }
-    fs.lchmodSync = function () {}
-  }
-  if (fs.chown && !fs.lchown) {
-    fs.lchown = function (path, uid, gid, cb) {
-      if (cb) process.nextTick(cb)
-    }
-    fs.lchownSync = function () {}
-  }
-
-  // on Windows, A/V software can lock the directory, causing this
-  // to fail with an EACCES or EPERM if the directory contains newly
-  // created files.  Try again on failure, for up to 60 seconds.
-
-  // Set the timeout this long because some Windows Anti-Virus, such as Parity
-  // bit9, may lock files for up to a minute, causing npm package install
-  // failures. Also, take care to yield the scheduler. Windows scheduling gives
-  // CPU to a busy looping process, which can cause the program causing the lock
-  // contention to be starved of CPU by node, so the contention doesn't resolve.
-  if (platform === "win32") {
-    fs.rename = typeof fs.rename !== 'function' ? fs.rename
-    : (function (fs$rename) {
-      function rename (from, to, cb) {
-        var start = Date.now()
-        var backoff = 0;
-        fs$rename(from, to, function CB (er) {
-          if (er
-              && (er.code === "EACCES" || er.code === "EPERM" || er.code === "EBUSY")
-              && Date.now() - start < 60000) {
-            setTimeout(function() {
-              fs.stat(to, function (stater, st) {
-                if (stater && stater.code === "ENOENT")
-                  fs$rename(from, to, CB);
-                else
-                  cb(er)
-              })
-            }, backoff)
-            if (backoff < 100)
-              backoff += 10;
-            return;
-          }
-          if (cb) cb(er)
-        })
-      }
-      if (Object.setPrototypeOf) Object.setPrototypeOf(rename, fs$rename)
-      return rename
-    })(fs.rename)
-  }
-
-  // if read() returns EAGAIN, then just try it again.
-  fs.read = typeof fs.read !== 'function' ? fs.read
-  : (function (fs$read) {
-    function read (fd, buffer, offset, length, position, callback_) {
-      var callback
-      if (callback_ && typeof callback_ === 'function') {
-        var eagCounter = 0
-        callback = function (er, _, __) {
-          if (er && er.code === 'EAGAIN' && eagCounter < 10) {
-            eagCounter ++
-            return fs$read.call(fs, fd, buffer, offset, length, position, callback)
-          }
-          callback_.apply(this, arguments)
-        }
-      }
-      return fs$read.call(fs, fd, buffer, offset, length, position, callback)
-    }
-
-    // This ensures `util.promisify` works as it does for native `fs.read`.
-    if (Object.setPrototypeOf) Object.setPrototypeOf(read, fs$read)
-    return read
-  })(fs.read)
-
-  fs.readSync = typeof fs.readSync !== 'function' ? fs.readSync
-  : (function (fs$readSync) { return function (fd, buffer, offset, length, position) {
-    var eagCounter = 0
-    while (true) {
-      try {
-        return fs$readSync.call(fs, fd, buffer, offset, length, position)
-      } catch (er) {
-        if (er.code === 'EAGAIN' && eagCounter < 10) {
-          eagCounter ++
-          continue
-        }
-        throw er
-      }
-    }
-  }})(fs.readSync)
-
-  function patchLchmod (fs) {
-    fs.lchmod = function (path, mode, callback) {
-      fs.open( path
-             , constants.O_WRONLY | constants.O_SYMLINK
-             , mode
-             , function (err, fd) {
-        if (err) {
-          if (callback) callback(err)
-          return
-        }
-        // prefer to return the chmod error, if one occurs,
-        // but still try to close, and report closing errors if they occur.
-        fs.fchmod(fd, mode, function (err) {
-          fs.close(fd, function(err2) {
-            if (callback) callback(err || err2)
-          })
-        })
-      })
-    }
-
-    fs.lchmodSync = function (path, mode) {
-      var fd = fs.openSync(path, constants.O_WRONLY | constants.O_SYMLINK, mode)
-
-      // prefer to return the chmod error, if one occurs,
-      // but still try to close, and report closing errors if they occur.
-      var threw = true
-      var ret
-      try {
-        ret = fs.fchmodSync(fd, mode)
-        threw = false
-      } finally {
-        if (threw) {
-          try {
-            fs.closeSync(fd)
-          } catch (er) {}
-        } else {
-          fs.closeSync(fd)
-        }
-      }
-      return ret
-    }
-  }
-
-  function patchLutimes (fs) {
-    if (constants.hasOwnProperty("O_SYMLINK") && fs.futimes) {
-      fs.lutimes = function (path, at, mt, cb) {
-        fs.open(path, constants.O_SYMLINK, function (er, fd) {
-          if (er) {
-            if (cb) cb(er)
-            return
-          }
-          fs.futimes(fd, at, mt, function (er) {
-            fs.close(fd, function (er2) {
-              if (cb) cb(er || er2)
-            })
-          })
-        })
-      }
-
-      fs.lutimesSync = function (path, at, mt) {
-        var fd = fs.openSync(path, constants.O_SYMLINK)
-        var ret
-        var threw = true
-        try {
-          ret = fs.futimesSync(fd, at, mt)
-          threw = false
-        } finally {
-          if (threw) {
-            try {
-              fs.closeSync(fd)
-            } catch (er) {}
-          } else {
-            fs.closeSync(fd)
-          }
-        }
-        return ret
-      }
-
-    } else if (fs.futimes) {
-      fs.lutimes = function (_a, _b, _c, cb) { if (cb) process.nextTick(cb) }
-      fs.lutimesSync = function () {}
-    }
-  }
-
-  function chmodFix (orig) {
-    if (!orig) return orig
-    return function (target, mode, cb) {
-      return orig.call(fs, target, mode, function (er) {
-        if (chownErOk(er)) er = null
-        if (cb) cb.apply(this, arguments)
-      })
-    }
-  }
-
-  function chmodFixSync (orig) {
-    if (!orig) return orig
-    return function (target, mode) {
-      try {
-        return orig.call(fs, target, mode)
-      } catch (er) {
-        if (!chownErOk(er)) throw er
-      }
-    }
-  }
-
-
-  function chownFix (orig) {
-    if (!orig) return orig
-    return function (target, uid, gid, cb) {
-      return orig.call(fs, target, uid, gid, function (er) {
-        if (chownErOk(er)) er = null
-        if (cb) cb.apply(this, arguments)
-      })
-    }
-  }
-
-  function chownFixSync (orig) {
-    if (!orig) return orig
-    return function (target, uid, gid) {
-      try {
-        return orig.call(fs, target, uid, gid)
-      } catch (er) {
-        if (!chownErOk(er)) throw er
-      }
-    }
-  }
-
-  function statFix (orig) {
-    if (!orig) return orig
-    // Older versions of Node erroneously returned signed integers for
-    // uid + gid.
-    return function (target, options, cb) {
-      if (typeof options === 'function') {
-        cb = options
-        options = null
-      }
-      function callback (er, stats) {
-        if (stats) {
-          if (stats.uid < 0) stats.uid += 0x100000000
-          if (stats.gid < 0) stats.gid += 0x100000000
-        }
-        if (cb) cb.apply(this, arguments)
-      }
-      return options ? orig.call(fs, target, options, callback)
-        : orig.call(fs, target, callback)
-    }
-  }
-
-  function statFixSync (orig) {
-    if (!orig) return orig
-    // Older versions of Node erroneously returned signed integers for
-    // uid + gid.
-    return function (target, options) {
-      var stats = options ? orig.call(fs, target, options)
-        : orig.call(fs, target)
-      if (stats) {
-        if (stats.uid < 0) stats.uid += 0x100000000
-        if (stats.gid < 0) stats.gid += 0x100000000
-      }
-      return stats;
-    }
-  }
-
-  // ENOSYS means that the fs doesn't support the op. Just ignore
-  // that, because it doesn't matter.
-  //
-  // if there's no getuid, or if getuid() is something other
-  // than 0, and the error is EINVAL or EPERM, then just ignore
-  // it.
-  //
-  // This specific case is a silent failure in cp, install, tar,
-  // and most other unix tools that manage permissions.
-  //
-  // When running as root, or if other types of errors are
-  // encountered, then it's strict.
-  function chownErOk (er) {
-    if (!er)
-      return true
-
-    if (er.code === "ENOSYS")
-      return true
-
-    var nonroot = !process.getuid || process.getuid() !== 0
-    if (nonroot) {
-      if (er.code === "EINVAL" || er.code === "EPERM")
-        return true
-    }
-
-    return false
-  }
-}
-
 
 /***/ }),
 
@@ -41449,6 +37136,17 @@ const agent_base_1 = __nccwpck_require__(98894);
 const url_1 = __nccwpck_require__(87016);
 const parse_proxy_response_1 = __nccwpck_require__(37943);
 const debug = (0, debug_1.default)('https-proxy-agent');
+const setServernameFromNonIpHost = (options) => {
+    if (options.servername === undefined &&
+        options.host &&
+        !net.isIP(options.host)) {
+        return {
+            ...options,
+            servername: options.host,
+        };
+    }
+    return options;
+};
 /**
  * The `HttpsProxyAgent` implements an HTTP Agent subclass that connects to
  * the specified "HTTP(s) proxy server" in order to proxy HTTPS requests.
@@ -41496,11 +37194,7 @@ class HttpsProxyAgent extends agent_base_1.Agent {
         let socket;
         if (proxy.protocol === 'https:') {
             debug('Creating `tls.Socket`: %o', this.connectOpts);
-            const servername = this.connectOpts.servername || this.connectOpts.host;
-            socket = tls.connect({
-                ...this.connectOpts,
-                servername,
-            });
+            socket = tls.connect(setServernameFromNonIpHost(this.connectOpts));
         }
         else {
             debug('Creating `net.Socket`: %o', this.connectOpts);
@@ -41536,11 +37230,9 @@ class HttpsProxyAgent extends agent_base_1.Agent {
                 // The proxy is connecting to a TLS server, so upgrade
                 // this socket connection to a TLS connection.
                 debug('Upgrading socket connection to TLS');
-                const servername = opts.servername || opts.host;
                 return tls.connect({
-                    ...omit(opts, 'host', 'path', 'port'),
+                    ...omit(setServernameFromNonIpHost(opts), 'host', 'path', 'port'),
                     socket,
-                    servername,
                 });
             }
             return socket;
@@ -41750,9 +37442,7 @@ class AddressError extends Error {
     constructor(message, parseMessage) {
         super(message);
         this.name = 'AddressError';
-        if (parseMessage !== null) {
-            this.parseMessage = parseMessage;
-        }
+        this.parseMessage = parseMessage;
     }
 }
 exports.AddressError = AddressError;
@@ -41761,24 +37451,89 @@ exports.AddressError = AddressError;
 /***/ }),
 
 /***/ 45864:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.isCorrect = exports.isInSubnet = void 0;
+exports.isInSubnet = isInSubnet;
+exports.isHostInSubnet = isHostInSubnet;
+exports.isGloballyReachable = isGloballyReachable;
+exports.offsetBigInt = offsetBigInt;
+exports.isCorrect = isCorrect;
+exports.prefixLengthFromMask = prefixLengthFromMask;
+exports.assertByteArray = assertByteArray;
+exports.numberToPaddedHex = numberToPaddedHex;
+exports.stringToPaddedHex = stringToPaddedHex;
+exports.testBit = testBit;
+const address_error_1 = __nccwpck_require__(68850);
+/**
+ * Returns whether this address's *network* is contained within `address`,
+ * i.e. whether every address this one can represent also falls inside
+ * `address`. A network wider than `address` is not contained in it, so
+ * `10.0.0.0/8` is not in `10.0.0.0/16`.
+ *
+ * To ask whether the address itself falls inside a range, ignoring any CIDR
+ * suffix it was written with, use {@link isHostInSubnet} instead. That is the
+ * question the special-use classifiers ask.
+ */
 function isInSubnet(address) {
     if (this.subnetMask < address.subnetMask) {
         return false;
     }
-    if (this.mask(address.subnetMask) === address.mask()) {
-        return true;
-    }
-    return false;
+    return isHostInSubnet.call(this, address);
 }
-exports.isInSubnet = isInSubnet;
+/**
+ * Returns whether this address's host bits fall inside `address`, ignoring
+ * this address's own subnet mask.
+ *
+ * This is the primitive the special-use classifiers (`isLoopback`,
+ * `isPrivate`, `isLinkLocal`, `getType`, …) are built on: they answer a
+ * question about the address, so the answer must not change with the CIDR
+ * suffix the caller happened to write. Use this rather than
+ * {@link isInSubnet} when classifying a single address — notably when the
+ * address came from untrusted input and the result backs a trust-boundary
+ * decision such as an SSRF allow/deny filter.
+ */
+function isHostInSubnet(address) {
+    return this.mask(address.subnetMask) === address.mask();
+}
+/**
+ * Returns whether the registry marks this address globally reachable: the
+ * answer of the most specific entry containing it that has one, or `true`
+ * when no entry contains it.
+ */
+function isGloballyReachable(entries) {
+    let best = null;
+    for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        if (entry.reachable !== null &&
+            isHostInSubnet.call(this, entry.subnet) &&
+            (best === null || entry.subnet.subnetMask > best.subnet.subnetMask)) {
+            best = entry;
+        }
+    }
+    return best === null ? true : best.reachable;
+}
+/**
+ * Adds `n` to `value` and returns the result, throwing `AddressError` unless
+ * `n` is an integer and the result stays within `[0, 2**bits - 1]`.
+ */
+function offsetBigInt(value, n, bits, family) {
+    if (typeof n === 'number' && !Number.isSafeInteger(n)) {
+        throw new address_error_1.AddressError(`${family} offset must be an integer`);
+    }
+    if (typeof n !== 'number' && typeof n !== 'bigint') {
+        throw new address_error_1.AddressError(`${family} offset must be an integer`);
+    }
+    const result = value + BigInt(n);
+    if (result < BigInt(0) || result > (BigInt(1) << BigInt(bits)) - BigInt(1)) {
+        throw new address_error_1.AddressError(`${family} offset leaves the address space`);
+    }
+    return result;
+}
 function isCorrect(defaultBits) {
-    return function () {
+    return function isCorrectForm() {
         if (this.addressMinusSuffix !== this.correctForm()) {
             return false;
         }
@@ -41788,7 +37543,58 @@ function isCorrect(defaultBits) {
         return this.parsedSubnet === String(this.subnetMask);
     };
 }
-exports.isCorrect = isCorrect;
+/**
+ * Returns the prefix length (number of leading 1 bits) of a contiguous
+ * subnet mask. Throws `AddressError` if the mask is non-contiguous (e.g.
+ * `255.0.255.0`).
+ */
+function prefixLengthFromMask(value, totalBits) {
+    const binary = value.toString(2).padStart(totalBits, '0');
+    if (binary.length > totalBits) {
+        throw new address_error_1.AddressError('Invalid subnet mask.');
+    }
+    const firstZero = binary.indexOf('0');
+    if (firstZero === -1) {
+        return totalBits;
+    }
+    if (binary.slice(firstZero).includes('1')) {
+        throw new address_error_1.AddressError('Invalid subnet mask.');
+    }
+    return firstZero;
+}
+/**
+ * Throws `AddressError` unless `bytes` holds exactly `byteCount` integers,
+ * each from `minimum` to 255. Pass a `minimum` of `-128` where signed bytes
+ * are accepted and folded to unsigned, and `0` where they are not.
+ */
+function assertByteArray(bytes, byteCount, family, minimum) {
+    if (bytes.length !== byteCount) {
+        throw new address_error_1.AddressError(`${family} addresses require exactly ${byteCount} bytes`);
+    }
+    for (let i = 0; i < bytes.length; i++) {
+        if (!Number.isInteger(bytes[i]) || bytes[i] < minimum || bytes[i] > 255) {
+            throw new address_error_1.AddressError(`All bytes must be integers between ${minimum} and 255`);
+        }
+    }
+}
+function numberToPaddedHex(number) {
+    return number.toString(16).padStart(2, '0');
+}
+function stringToPaddedHex(numberString) {
+    return numberToPaddedHex(parseInt(numberString, 10));
+}
+/**
+ * @param binaryValue Binary representation of a value (e.g. `10`)
+ * @param position Byte position, where 0 is the least significant bit
+ */
+function testBit(binaryValue, position) {
+    const { length } = binaryValue;
+    if (position > length) {
+        return false;
+    }
+    const positionInString = length - position;
+    return binaryValue.substring(positionInString, positionInString + 1) === '1';
+}
 //# sourceMappingURL=common.js.map
 
 /***/ }),
@@ -41823,11 +37629,11 @@ var __importStar = (this && this.__importStar) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.v6 = exports.AddressError = exports.Address6 = exports.Address4 = void 0;
-const ipv4_1 = __nccwpck_require__(17946);
+var ipv4_1 = __nccwpck_require__(17946);
 Object.defineProperty(exports, "Address4", ({ enumerable: true, get: function () { return ipv4_1.Address4; } }));
-const ipv6_1 = __nccwpck_require__(38096);
+var ipv6_1 = __nccwpck_require__(38096);
 Object.defineProperty(exports, "Address6", ({ enumerable: true, get: function () { return ipv6_1.Address6; } }));
-const address_error_1 = __nccwpck_require__(68850);
+var address_error_1 = __nccwpck_require__(68850);
 Object.defineProperty(exports, "AddressError", ({ enumerable: true, get: function () { return address_error_1.AddressError; } }));
 const helpers = __importStar(__nccwpck_require__(20339));
 exports.v6 = { helpers };
@@ -41869,15 +37675,14 @@ exports.Address4 = void 0;
 const common = __importStar(__nccwpck_require__(45864));
 const constants = __importStar(__nccwpck_require__(66437));
 const address_error_1 = __nccwpck_require__(68850);
-const jsbn_1 = __nccwpck_require__(95947);
-const sprintf_js_1 = __nccwpck_require__(19973);
+const isCorrect4 = common.isCorrect(constants.BITS);
 /**
  * Represents an IPv4 address
- * @class Address4
  * @param {string} address - An IPv4 address string
  */
 class Address4 {
     constructor(address) {
+        this.addressMinusSuffix = '';
         this.groups = constants.GROUPS;
         this.parsedAddress = [];
         this.parsedSubnet = '';
@@ -41886,18 +37691,23 @@ class Address4 {
         this.v4 = true;
         /**
          * Returns true if the address is correct, false otherwise
-         * @memberof Address4
-         * @instance
          * @returns {Boolean}
          */
-        this.isCorrect = common.isCorrect(constants.BITS);
+        this.isCorrect = isCorrect4;
         /**
          * Returns true if the given address is in the subnet of the current address
-         * @memberof Address4
-         * @instance
          * @returns {boolean}
          */
         this.isInSubnet = common.isInSubnet;
+        /**
+         * Returns true if this address's host bits fall inside the given subnet,
+         * ignoring this address's own subnet mask. Prefer this over `isInSubnet`
+         * when classifying a single address, so the answer doesn't change with the
+         * CIDR suffix the caller happened to write — notably when the address came
+         * from untrusted input and the result backs a trust-boundary decision.
+         * @returns {boolean}
+         */
+        this.isHostInSubnet = common.isHostInSubnet;
         this.address = address;
         const subnet = constants.RE_SUBNET_STRING.exec(address);
         if (subnet) {
@@ -41912,66 +37722,145 @@ class Address4 {
         this.addressMinusSuffix = address;
         this.parsedAddress = this.parse(address);
     }
+    /**
+     * Returns true if the given string is a valid IPv4 address (with optional
+     * CIDR subnet), false otherwise. Host bits in the subnet portion are
+     * allowed (e.g. `192.168.1.5/24` is valid); for strict network-address
+     * validation compare `correctForm()` to `startAddress().correctForm()`,
+     * or use `networkForm()`.
+     */
     static isValid(address) {
         try {
             // eslint-disable-next-line no-new
             new Address4(address);
             return true;
         }
-        catch (e) {
+        catch {
             return false;
         }
     }
-    /*
-     * Parses a v4 address
+    /**
+     * Parses an IPv4 address string into its four octet groups and stores the
+     * result on `this.parsedAddress`. Called automatically by the constructor;
+     * you typically don't need to call it directly. Throws `AddressError` if
+     * the input is not a valid IPv4 address.
      */
     parse(address) {
         const groups = address.split('.');
+        // Checked before the general match so the error names the actual problem.
+        // Address6 rejects the same notation on its v4-in-v6 path.
+        if (groups.some((group) => /^0\d/.test(group))) {
+            throw new address_error_1.AddressError("IPv4 addresses can't have leading zeroes.");
+        }
         if (!address.match(constants.RE_ADDRESS)) {
             throw new address_error_1.AddressError('Invalid IPv4 address.');
         }
         return groups;
     }
     /**
-     * Returns the correct form of an address
-     * @memberof Address4
-     * @instance
-     * @returns {String}
+     * Returns the address in correct form: octets joined with `.` and any
+     * leading zeros stripped (e.g. `192.168.1.1`). For IPv4 this matches the
+     * canonical dotted-decimal representation.
      */
     correctForm() {
         return this.parsedAddress.map((part) => parseInt(part, 10)).join('.');
     }
     /**
-     * Converts a hex string to an IPv4 address object
-     * @memberof Address4
-     * @static
+     * Construct an `Address4` from an address and a dotted-decimal subnet
+     * mask given as separate strings (e.g. as returned by Node's
+     * `os.networkInterfaces()`). Throws `AddressError` if the mask is
+     * non-contiguous (e.g. `255.0.255.0`).
+     * @example
+     * var address = Address4.fromAddressAndMask('192.168.1.1', '255.255.255.0');
+     * address.subnetMask; // 24
+     */
+    static fromAddressAndMask(address, mask) {
+        const bits = common.prefixLengthFromMask(new Address4(mask).bigInt(), constants.BITS);
+        return new Address4(`${address}/${bits}`);
+    }
+    /**
+     * Construct an `Address4` from an address and a Cisco-style wildcard mask
+     * given as separate strings (e.g. `0.0.0.255` for a `/24`). The wildcard
+     * mask is the bitwise inverse of the subnet mask. Throws `AddressError`
+     * if the mask is non-contiguous (e.g. `0.255.0.255`).
+     * @example
+     * var address = Address4.fromAddressAndWildcardMask('10.0.0.1', '0.0.0.255');
+     * address.subnetMask; // 24
+     */
+    static fromAddressAndWildcardMask(address, wildcardMask) {
+        const wildcard = new Address4(wildcardMask).bigInt();
+        const allOnes = (BigInt(1) << BigInt(constants.BITS)) - BigInt(1);
+        const mask = wildcard ^ allOnes;
+        const bits = common.prefixLengthFromMask(mask, constants.BITS);
+        return new Address4(`${address}/${bits}`);
+    }
+    /**
+     * Construct an `Address4` from a wildcard pattern with trailing `*`
+     * octets. The number of trailing wildcards determines the prefix
+     * length: each `*` represents 8 bits.
+     *
+     * Only trailing whole-octet wildcards are supported. Partial-octet
+     * wildcards (e.g. `192.168.0.1*`) and interior wildcards (e.g.
+     * `192.*.0.1`) throw `AddressError`.
+     * @example
+     * Address4.fromWildcard('192.168.0.*').subnet;   // '/24'
+     * Address4.fromWildcard('192.168.*.*').subnet;   // '/16'
+     * Address4.fromWildcard('*.*.*.*').subnet;       // '/0'
+     */
+    static fromWildcard(input) {
+        const groups = input.split('.');
+        if (groups.length !== constants.GROUPS) {
+            throw new address_error_1.AddressError('Wildcard pattern must have 4 octets');
+        }
+        let firstWildcard = -1;
+        for (let i = 0; i < groups.length; i++) {
+            if (groups[i] === '*') {
+                if (firstWildcard === -1) {
+                    firstWildcard = i;
+                }
+            }
+            else if (firstWildcard !== -1) {
+                throw new address_error_1.AddressError('Wildcard `*` must only appear in trailing octets (e.g. `192.168.0.*`)');
+            }
+        }
+        const trailing = firstWildcard === -1 ? 0 : groups.length - firstWildcard;
+        const replaced = groups.map((g) => (g === '*' ? '0' : g));
+        const subnetBits = constants.BITS - trailing * 8;
+        return new Address4(`${replaced.join('.')}/${subnetBits}`);
+    }
+    /**
+     * Converts a hex string to an IPv4 address object. Accepts 8 hex digits
+     * with optional `:` separators (e.g. `'7f000001'` or `'7f:00:00:01'`).
+     * Throws `AddressError` for any other length or for non-hex characters.
      * @param {string} hex - a hex string to convert
      * @returns {Address4}
      */
     static fromHex(hex) {
-        const padded = hex.replace(/:/g, '').padStart(8, '0');
+        const stripped = hex.replace(/:/g, '');
+        if (!/^[0-9a-fA-F]{8}$/.test(stripped)) {
+            throw new address_error_1.AddressError('IPv4 hex must be exactly 8 hex digits');
+        }
         const groups = [];
-        let i;
-        for (i = 0; i < 8; i += 2) {
-            const h = padded.slice(i, i + 2);
-            groups.push(parseInt(h, 16));
+        for (let i = 0; i < 8; i += 2) {
+            groups.push(parseInt(stripped.slice(i, i + 2), 16));
         }
         return new Address4(groups.join('.'));
     }
     /**
-     * Converts an integer into a IPv4 address object
-     * @memberof Address4
-     * @static
+     * Converts an integer into a IPv4 address object. The integer must be a
+     * non-negative safe integer in the range `[0, 2**32 - 1]`; otherwise
+     * `AddressError` is thrown.
      * @param {integer} integer - a number to convert
      * @returns {Address4}
      */
     static fromInteger(integer) {
-        return Address4.fromHex(integer.toString(16));
+        if (!Number.isInteger(integer) || integer < 0 || integer > 0xffffffff) {
+            throw new address_error_1.AddressError('IPv4 integer must be in the range 0 to 2**32 - 1');
+        }
+        return Address4.fromHex(integer.toString(16).padStart(8, '0'));
     }
     /**
      * Return an address from in-addr.arpa form
-     * @memberof Address4
-     * @static
      * @param {string} arpaFormAddress - an 'in-addr.arpa' form ipv4 address
      * @returns {Adress4}
      * @example
@@ -41986,17 +37875,15 @@ class Address4 {
     }
     /**
      * Converts an IPv4 address object to a hex string
-     * @memberof Address4
-     * @instance
      * @returns {String}
      */
     toHex() {
-        return this.parsedAddress.map((part) => (0, sprintf_js_1.sprintf)('%02x', parseInt(part, 10))).join(':');
+        return this.parsedAddress.map((part) => common.stringToPaddedHex(part)).join(':');
     }
     /**
-     * Converts an IPv4 address object to an array of bytes
-     * @memberof Address4
-     * @instance
+     * Converts an IPv4 address object to an array of bytes.
+     *
+     * To get a Node.js `Buffer`, wrap the result: `Buffer.from(address.toArray())`.
      * @returns {Array}
      */
     toArray() {
@@ -42004,103 +37891,170 @@ class Address4 {
     }
     /**
      * Converts an IPv4 address object to an IPv6 address group
-     * @memberof Address4
-     * @instance
      * @returns {String}
      */
     toGroup6() {
         const output = [];
         let i;
         for (i = 0; i < constants.GROUPS; i += 2) {
-            const hex = (0, sprintf_js_1.sprintf)('%02x%02x', parseInt(this.parsedAddress[i], 10), parseInt(this.parsedAddress[i + 1], 10));
-            output.push((0, sprintf_js_1.sprintf)('%x', parseInt(hex, 16)));
+            output.push(`${common.stringToPaddedHex(this.parsedAddress[i])}${common.stringToPaddedHex(this.parsedAddress[i + 1])}`);
         }
         return output.join(':');
     }
     /**
-     * Returns the address as a BigInteger
-     * @memberof Address4
-     * @instance
-     * @returns {BigInteger}
+     * Returns the address as a `bigint`
+     * @returns {bigint}
      */
-    bigInteger() {
-        return new jsbn_1.BigInteger(this.parsedAddress.map((n) => (0, sprintf_js_1.sprintf)('%02x', parseInt(n, 10))).join(''), 16);
+    bigInt() {
+        return BigInt(`0x${this.parsedAddress.map((n) => common.stringToPaddedHex(n)).join('')}`);
     }
     /**
      * Helper function getting start address.
-     * @memberof Address4
-     * @instance
-     * @returns {BigInteger}
+     * @returns {bigint}
      */
     _startAddress() {
-        return new jsbn_1.BigInteger(this.mask() + '0'.repeat(constants.BITS - this.subnetMask), 2);
+        return BigInt(`0b${this.mask() + '0'.repeat(constants.BITS - this.subnetMask)}`);
     }
     /**
      * The first address in the range given by this address' subnet.
      * Often referred to as the Network Address.
-     * @memberof Address4
-     * @instance
      * @returns {Address4}
      */
     startAddress() {
-        return Address4.fromBigInteger(this._startAddress());
+        return Address4.fromBigInt(this._startAddress());
     }
     /**
      * The first host address in the range given by this address's subnet ie
      * the first address after the Network Address
-     * @memberof Address4
-     * @instance
      * @returns {Address4}
      */
     startAddressExclusive() {
-        const adjust = new jsbn_1.BigInteger('1');
-        return Address4.fromBigInteger(this._startAddress().add(adjust));
+        const adjust = BigInt('1');
+        return Address4.fromBigInt(this._startAddress() + adjust);
+    }
+    /**
+     * Returns the address `n` addresses after this one (or before, when `n` is
+     * negative), keeping this address's subnet mask. Throws `AddressError` when
+     * the result would fall outside the IPv4 address space or `n` is not an
+     * integer.
+     * @param {number | bigint} n
+     * @returns {Address4}
+     * @example
+     * new Address4('10.0.0.0/24').offset(1).correctForm(); // '10.0.0.1'
+     */
+    offset(n) {
+        return Address4.fromBigInt(common.offsetBigInt(this.bigInt(), n, constants.BITS, 'IPv4')).withSubnetMask(this.subnetMask);
+    }
+    /**
+     * Returns the network that follows this address's network: the address after
+     * {@link endAddress}, with the same subnet mask. Throws `AddressError` when
+     * this network is the last one in the address space.
+     * @returns {Address4}
+     * @example
+     * new Address4('10.0.0.0/24').nextNetwork().networkForm(); // '10.0.1.0/24'
+     */
+    nextNetwork() {
+        return Address4.fromBigInt(common.offsetBigInt(this._endAddress(), 1, constants.BITS, 'IPv4')).withSubnetMask(this.subnetMask);
+    }
+    withSubnetMask(subnetMask) {
+        return new Address4(`${this.correctForm()}/${subnetMask}`);
     }
     /**
      * Helper function getting end address.
-     * @memberof Address4
-     * @instance
-     * @returns {BigInteger}
+     * @returns {bigint}
      */
     _endAddress() {
-        return new jsbn_1.BigInteger(this.mask() + '1'.repeat(constants.BITS - this.subnetMask), 2);
+        return BigInt(`0b${this.mask() + '1'.repeat(constants.BITS - this.subnetMask)}`);
     }
     /**
      * The last address in the range given by this address' subnet
      * Often referred to as the Broadcast
-     * @memberof Address4
-     * @instance
      * @returns {Address4}
      */
     endAddress() {
-        return Address4.fromBigInteger(this._endAddress());
+        return Address4.fromBigInt(this._endAddress());
     }
     /**
      * The last host address in the range given by this address's subnet ie
      * the last address prior to the Broadcast Address
-     * @memberof Address4
-     * @instance
      * @returns {Address4}
      */
     endAddressExclusive() {
-        const adjust = new jsbn_1.BigInteger('1');
-        return Address4.fromBigInteger(this._endAddress().subtract(adjust));
+        const adjust = BigInt('1');
+        return Address4.fromBigInt(this._endAddress() - adjust);
     }
     /**
-     * Converts a BigInteger to a v4 address object
-     * @memberof Address4
-     * @static
-     * @param {BigInteger} bigInteger - a BigInteger to convert
+     * The dotted-decimal form of the subnet mask, e.g. `255.255.240.0` for
+     * a `/20`. Returns an `Address4`; call `.correctForm()` for the string.
      * @returns {Address4}
      */
-    static fromBigInteger(bigInteger) {
-        return Address4.fromInteger(parseInt(bigInteger.toString(), 10));
+    subnetMaskAddress() {
+        return Address4.fromBigInt(BigInt(`0b${'1'.repeat(this.subnetMask)}${'0'.repeat(constants.BITS - this.subnetMask)}`));
+    }
+    /**
+     * The Cisco-style wildcard mask, e.g. `0.0.0.255` for a `/24`. This is
+     * the bitwise inverse of `subnetMaskAddress()`. Returns an `Address4`;
+     * call `.correctForm()` for the string.
+     * @returns {Address4}
+     */
+    wildcardMask() {
+        return Address4.fromBigInt(BigInt(`0b${'0'.repeat(this.subnetMask)}${'1'.repeat(constants.BITS - this.subnetMask)}`));
+    }
+    /**
+     * The network address in CIDR string form, e.g. `192.168.1.0/24` for
+     * `192.168.1.5/24`. For an address with no explicit subnet the prefix is
+     * `/32`, e.g. `networkForm()` on `192.168.1.5` returns `192.168.1.5/32`.
+     * @returns {string}
+     */
+    networkForm() {
+        return `${this.startAddress().correctForm()}/${this.subnetMask}`;
+    }
+    /**
+     * Converts a BigInt to a v4 address object. The value must be in the
+     * range `[0, 2**32 - 1]`; otherwise `AddressError` is thrown.
+     * @param {bigint} bigInt - a BigInt to convert
+     * @returns {Address4}
+     */
+    static fromBigInt(bigInt) {
+        if (bigInt < BigInt(0) || bigInt > BigInt(0xffffffff)) {
+            throw new address_error_1.AddressError('IPv4 BigInt must be in the range 0 to 2**32 - 1');
+        }
+        return Address4.fromHex(bigInt.toString(16).padStart(8, '0'));
+    }
+    /**
+     * Convert a byte array to an Address4 object. Throws `AddressError` unless
+     * given exactly 4 integers from 0 to 255. Signed bytes are rejected, so
+     * this differs from `Address6.fromByteArray`, which folds them; the two
+     * contracts converge on this stricter form in the next major version.
+     *
+     * To convert from a Node.js `Buffer`, spread it: `Address4.fromByteArray([...buf])`.
+     * @param {Array<number>} bytes - an array of 4 bytes (0-255)
+     * @returns {Address4}
+     */
+    static fromByteArray(bytes) {
+        common.assertByteArray(bytes, 4, 'IPv4', 0);
+        return this.fromUnsignedByteArray(bytes);
+    }
+    /**
+     * Convert an unsigned byte array to an Address4 object. Throws
+     * `AddressError` unless given exactly 4 bytes, and rejects values outside
+     * 0 to 255 when parsing the resulting address.
+     *
+     * To convert from a Node.js `Buffer`, spread it:
+     * `Address4.fromUnsignedByteArray([...buf])`.
+     * @param {Array<number>} bytes - an array of 4 unsigned bytes (0-255)
+     * @returns {Address4}
+     */
+    static fromUnsignedByteArray(bytes) {
+        if (bytes.length !== 4) {
+            throw new address_error_1.AddressError('IPv4 addresses require exactly 4 bytes');
+        }
+        const address = bytes.join('.');
+        return new Address4(address);
     }
     /**
      * Returns the first n bits of the address, defaulting to the
      * subnet mask
-     * @memberof Address4
-     * @instance
      * @returns {String}
      */
     mask(mask) {
@@ -42111,19 +38065,16 @@ class Address4 {
     }
     /**
      * Returns the bits in the given range as a base-2 string
-     * @memberof Address4
-     * @instance
      * @returns {string}
      */
     getBitsBase2(start, end) {
         return this.binaryZeroPad().slice(start, end);
     }
     /**
-     * Return the reversed ip6.arpa form of the address
-     * @memberof Address4
+     * Return the reversed in-addr.arpa form of the address, e.g.
+     * `42.2.0.192.in-addr.arpa.` for `192.0.2.42`.
      * @param {Object} options
      * @param {boolean} options.omitSuffix - omit the "in-addr.arpa" suffix
-     * @instance
      * @returns {String}
      */
     reverseForm(options) {
@@ -42134,36 +38085,145 @@ class Address4 {
         if (options.omitSuffix) {
             return reversed;
         }
-        return (0, sprintf_js_1.sprintf)('%s.in-addr.arpa.', reversed);
+        return `${reversed}.in-addr.arpa.`;
     }
     /**
      * Returns true if the given address is a multicast address
-     * @memberof Address4
-     * @instance
      * @returns {boolean}
      */
     isMulticast() {
-        return this.isInSubnet(new Address4('224.0.0.0/4'));
+        return this.isHostInSubnet(MULTICAST_V4);
+    }
+    /**
+     * Returns true if the address is in one of the [RFC 1918](https://datatracker.ietf.org/doc/html/rfc1918) private address ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`).
+     * @returns {boolean}
+     */
+    isPrivate() {
+        return PRIVATE_V4.some((subnet) => this.isHostInSubnet(subnet));
+    }
+    /**
+     * Returns true if the address is in the loopback range `127.0.0.0/8` ([RFC 1122](https://datatracker.ietf.org/doc/html/rfc1122)).
+     * @returns {boolean}
+     */
+    isLoopback() {
+        return this.isHostInSubnet(LOOPBACK_V4);
+    }
+    /**
+     * Returns true if the address is in the link-local range `169.254.0.0/16` ([RFC 3927](https://datatracker.ietf.org/doc/html/rfc3927)).
+     * @returns {boolean}
+     */
+    isLinkLocal() {
+        return this.isHostInSubnet(LINK_LOCAL_V4);
+    }
+    /**
+     * Returns true if the address is the unspecified address `0.0.0.0`.
+     * @returns {boolean}
+     */
+    isUnspecified() {
+        return this.isHostInSubnet(UNSPECIFIED_V4);
+    }
+    /**
+     * Returns true if the address is the limited broadcast address `255.255.255.255` ([RFC 919](https://datatracker.ietf.org/doc/html/rfc919)).
+     * @returns {boolean}
+     */
+    isBroadcast() {
+        return this.isHostInSubnet(BROADCAST_V4);
+    }
+    /**
+     * Returns true if the address is in the carrier-grade NAT range `100.64.0.0/10` ([RFC 6598](https://datatracker.ietf.org/doc/html/rfc6598)).
+     * @returns {boolean}
+     */
+    isCGNAT() {
+        return this.isHostInSubnet(CGNAT_V4);
+    }
+    /**
+     * Returns true if the address is in one of the documentation ranges
+     * `192.0.2.0/24`, `198.51.100.0/24`, or `203.0.113.0/24` ([RFC 5737](https://datatracker.ietf.org/doc/html/rfc5737)).
+     * @returns {boolean}
+     */
+    isDocumentation() {
+        return DOCUMENTATION_V4.some((subnet) => this.isHostInSubnet(subnet));
+    }
+    /**
+     * Returns true if the address is in the benchmarking range `198.18.0.0/15` ([RFC 2544](https://datatracker.ietf.org/doc/html/rfc2544)).
+     * @returns {boolean}
+     */
+    isBenchmarking() {
+        return this.isHostInSubnet(BENCHMARKING_V4);
+    }
+    /**
+     * Returns true if the address is in the reserved range `240.0.0.0/4` ([RFC 1112](https://datatracker.ietf.org/doc/html/rfc1112)),
+     * which includes the limited broadcast address.
+     * @returns {boolean}
+     */
+    isReserved() {
+        return this.isHostInSubnet(RESERVED_V4);
+    }
+    /**
+     * Returns true if the address is globally reachable: not multicast, and not
+     * in any block the [IANA IPv4 Special-Purpose Address Registry](https://www.iana.org/assignments/iana-ipv4-special-registry/)
+     * marks as not globally reachable. That covers everything the individual
+     * classifiers name (private, loopback, link-local, CGNAT, unspecified,
+     * broadcast, documentation, benchmarking, reserved) and the blocks they do
+     * not, such as `0.0.0.0/8` and the IETF protocol assignments in
+     * `192.0.0.0/24`. This is the single predicate to use where a request must
+     * not reach an internal or special-purpose destination; see SECURITY.md.
+     * @returns {boolean}
+     */
+    isGlobal() {
+        return !this.isMulticast() && common.isGloballyReachable.call(this, SPECIAL_PURPOSE_V4);
     }
     /**
      * Returns a zero-padded base-2 string representation of the address
-     * @memberof Address4
-     * @instance
      * @returns {string}
      */
     binaryZeroPad() {
-        return this.bigInteger().toString(2).padStart(constants.BITS, '0');
+        if (this._binaryZeroPad === undefined) {
+            this._binaryZeroPad = this.bigInt().toString(2).padStart(constants.BITS, '0');
+        }
+        return this._binaryZeroPad;
     }
     /**
-     * Groups an IPv4 address for inclusion at the end of an IPv6 address
+     * Groups an IPv4 address for inclusion at the end of an IPv6 address.
+     *
+     * Returns an HTML fragment: each half of the address is wrapped in a
+     * `<span>` carrying the group classes an address-inspector UI hovers on.
+     * The address content is HTML-escaped; anything you concatenate around it
+     * is your responsibility.
      * @returns {String}
      */
     groupForV6() {
         const segments = this.parsedAddress;
-        return this.address.replace(constants.RE_ADDRESS, (0, sprintf_js_1.sprintf)('<span class="hover-group group-v4 group-6">%s</span>.<span class="hover-group group-v4 group-7">%s</span>', segments.slice(0, 2).join('.'), segments.slice(2, 4).join('.')));
+        return this.correctForm().replace(constants.RE_ADDRESS, `<span class="hover-group group-v4 group-6">${segments
+            .slice(0, 2)
+            .join('.')}</span>.<span class="hover-group group-v4 group-7">${segments
+            .slice(2, 4)
+            .join('.')}</span>`);
     }
 }
 exports.Address4 = Address4;
+const MULTICAST_V4 = new Address4('224.0.0.0/4');
+const PRIVATE_V4 = [
+    new Address4('10.0.0.0/8'),
+    new Address4('172.16.0.0/12'),
+    new Address4('192.168.0.0/16'),
+];
+const LOOPBACK_V4 = new Address4('127.0.0.0/8');
+const LINK_LOCAL_V4 = new Address4('169.254.0.0/16');
+const UNSPECIFIED_V4 = new Address4('0.0.0.0/32');
+const BROADCAST_V4 = new Address4('255.255.255.255/32');
+const CGNAT_V4 = new Address4('100.64.0.0/10');
+const DOCUMENTATION_V4 = [
+    new Address4('192.0.2.0/24'),
+    new Address4('198.51.100.0/24'),
+    new Address4('203.0.113.0/24'),
+];
+const BENCHMARKING_V4 = new Address4('198.18.0.0/15');
+const RESERVED_V4 = new Address4('240.0.0.0/4');
+const SPECIAL_PURPOSE_V4 = constants.SPECIAL_PURPOSE.map(([cidr, , reachable]) => ({
+    subnet: new Address4(cidr),
+    reachable,
+}));
 //# sourceMappingURL=ipv4.js.map
 
 /***/ }),
@@ -42207,8 +38267,8 @@ const helpers = __importStar(__nccwpck_require__(20339));
 const ipv4_1 = __nccwpck_require__(17946);
 const regular_expressions_1 = __nccwpck_require__(72016);
 const address_error_1 = __nccwpck_require__(68850);
-const jsbn_1 = __nccwpck_require__(95947);
-const sprintf_js_1 = __nccwpck_require__(19973);
+const common_1 = __nccwpck_require__(45864);
+const isCorrect6 = common.isCorrect(constants6.BITS);
 function assert(condition) {
     if (!condition) {
         throw new Error('Assertion failed.');
@@ -42244,15 +38304,13 @@ function compact(address, slice) {
     return s1.concat(['compact']).concat(s2);
 }
 function paddedHex(octet) {
-    return (0, sprintf_js_1.sprintf)('%04x', parseInt(octet, 16));
+    return parseInt(octet, 16).toString(16).padStart(4, '0');
 }
 function unsignByte(b) {
-    // eslint-disable-next-line no-bitwise
     return b & 0xff;
 }
 /**
  * Represents an IPv6 address
- * @class Address6
  * @param {string} address - An IPv6 address string
  * @param {number} [groups=8] - How many octets to parse
  * @example
@@ -42269,18 +38327,23 @@ class Address6 {
         // #region Attributes
         /**
          * Returns true if the given address is in the subnet of the current address
-         * @memberof Address6
-         * @instance
          * @returns {boolean}
          */
         this.isInSubnet = common.isInSubnet;
         /**
-         * Returns true if the address is correct, false otherwise
-         * @memberof Address6
-         * @instance
+         * Returns true if this address's host bits fall inside the given subnet,
+         * ignoring this address's own subnet mask. Prefer this over `isInSubnet`
+         * when classifying a single address, so the answer doesn't change with the
+         * CIDR suffix the caller happened to write — notably when the address came
+         * from untrusted input and the result backs a trust-boundary decision.
          * @returns {boolean}
          */
-        this.isCorrect = common.isCorrect(constants6.BITS);
+        this.isHostInSubnet = common.isHostInSubnet;
+        /**
+         * Returns true if the address is correct, false otherwise
+         * @returns {boolean}
+         */
+        this.isCorrect = isCorrect6;
         if (optionalGroups === undefined) {
             this.groups = constants6.GROUPS;
         }
@@ -42300,7 +38363,10 @@ class Address6 {
             }
             address = address.replace(constants6.RE_SUBNET_STRING, '');
         }
-        else if (/\//.test(address)) {
+        // RE_SUBNET_STRING anchors on the end of the address, so it strips only
+        // the trailing suffix. A second one left behind (`::/0/1`) is malformed
+        // and must be rejected rather than parsed as an address group.
+        if (/\//.test(address)) {
             throw new address_error_1.AddressError('Invalid subnet mask.');
         }
         const zone = constants6.RE_ZONE_STRING.exec(address);
@@ -42311,87 +38377,85 @@ class Address6 {
         this.addressMinusSuffix = address;
         this.parsedAddress = this.parse(this.addressMinusSuffix);
     }
+    /**
+     * Returns true if the given string is a valid IPv6 address (with optional
+     * CIDR subnet and zone identifier), false otherwise. Host bits in the
+     * subnet portion are allowed (e.g. `2001:db8::1/32` is valid); for strict
+     * network-address validation compare `correctForm()` to
+     * `startAddress().correctForm()`, or use `networkForm()`.
+     */
     static isValid(address) {
         try {
             // eslint-disable-next-line no-new
             new Address6(address);
             return true;
         }
-        catch (e) {
+        catch {
             return false;
         }
     }
     /**
-     * Convert a BigInteger to a v6 address object
-     * @memberof Address6
-     * @static
-     * @param {BigInteger} bigInteger - a BigInteger to convert
+     * Convert a BigInt to a v6 address object. The value must be in the
+     * range `[0, 2**128 - 1]`; otherwise `AddressError` is thrown.
+     * @param {bigint} bigInt - a BigInt to convert
      * @returns {Address6}
      * @example
-     * var bigInteger = new BigInteger('1000000000000');
-     * var address = Address6.fromBigInteger(bigInteger);
+     * var bigInt = BigInt('1000000000000');
+     * var address = Address6.fromBigInt(bigInt);
      * address.correctForm(); // '::e8:d4a5:1000'
      */
-    static fromBigInteger(bigInteger) {
-        const hex = bigInteger.toString(16).padStart(32, '0');
+    static fromBigInt(bigInt) {
+        if (bigInt < BigInt(0) || bigInt > (BigInt(1) << BigInt(constants6.BITS)) - BigInt(1)) {
+            throw new address_error_1.AddressError('IPv6 BigInt must be in the range 0 to 2**128 - 1');
+        }
+        const hex = bigInt.toString(16).padStart(32, '0');
         const groups = [];
-        let i;
-        for (i = 0; i < constants6.GROUPS; i++) {
+        for (let i = 0; i < constants6.GROUPS; i++) {
             groups.push(hex.slice(i * 4, (i + 1) * 4));
         }
         return new Address6(groups.join(':'));
     }
     /**
-     * Convert a URL (with optional port number) to an address object
-     * @memberof Address6
-     * @static
-     * @param {string} url - a URL with optional port number
+     * Parse a URL (with optional bracketed host and port) into an address and
+     * port. Returns either `{ address, port }` on success or
+     * `{ error, address: null, port: null }` if the URL could not be parsed.
+     * Ports are returned as numbers (or `null` if absent or out of range).
      * @example
      * var addressAndPort = Address6.fromURL('http://[ffff::]:8080/foo/');
      * addressAndPort.address.correctForm(); // 'ffff::'
      * addressAndPort.port; // 8080
      */
     static fromURL(url) {
+        var _a;
         let host;
         let port = null;
         let result;
+        let error;
+        // Remove the protocol prefix, if any
+        const stripped = url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
         // If we have brackets parse them and find a port
-        if (url.indexOf('[') !== -1 && url.indexOf(']:') !== -1) {
-            result = constants6.RE_URL_WITH_PORT.exec(url);
+        if (stripped.indexOf('[') !== -1 && stripped.indexOf(']:') !== -1) {
+            error = 'failed to parse address with port';
+            result = constants6.RE_URL_WITH_PORT.exec(stripped);
             if (result === null) {
-                return {
-                    error: 'failed to parse address with port',
-                    address: null,
-                    port: null,
-                };
+                return { error, address: null, port: null };
             }
             host = result[1];
             port = result[2];
-            // If there's a URL extract the address
-        }
-        else if (url.indexOf('/') !== -1) {
-            // Remove the protocol prefix
-            url = url.replace(/^[a-z0-9]+:\/\//, '');
-            // Parse the address
-            result = constants6.RE_URL.exec(url);
-            if (result === null) {
-                return {
-                    error: 'failed to parse address from URL',
-                    address: null,
-                    port: null,
-                };
-            }
-            host = result[1];
-            // Otherwise just assign the URL to the host and let the library parse it
         }
         else {
-            host = url;
+            error = 'failed to parse address from URL';
+            result = constants6.RE_URL.exec(stripped);
+            if (result === null) {
+                return { error, address: null, port: null };
+            }
+            host = (_a = result[1]) !== null && _a !== void 0 ? _a : result[2];
         }
         // If there's a port convert it to an integer
         if (port) {
             port = parseInt(port, 10);
-            // squelch out of range ports
-            if (port < 0 || port > 65536) {
+            // squelch out of range ports (valid ports are 0-65535)
+            if (port < 0 || port > 65535) {
                 port = null;
             }
         }
@@ -42399,15 +38463,103 @@ class Address6 {
             // Standardize `undefined` to `null`
             port = null;
         }
-        return {
-            address: new Address6(host),
-            port,
-        };
+        // The URL character class is a superset of valid IPv6, so a host the
+        // regex accepted (an IPv4 literal, bare punctuation, too many groups)
+        // can still be rejected by the parser
+        let address;
+        try {
+            address = new Address6(host);
+        }
+        catch {
+            return { error, address: null, port: null };
+        }
+        return { address, port };
+    }
+    /**
+     * Construct an `Address6` from an address and a hex subnet mask given as
+     * separate strings (e.g. as returned by Node's `os.networkInterfaces()`).
+     * Throws `AddressError` if the mask is non-contiguous (e.g.
+     * `ffff::ffff`).
+     * @example
+     * var address = Address6.fromAddressAndMask('fe80::1', 'ffff:ffff:ffff:ffff::');
+     * address.subnetMask; // 64
+     */
+    static fromAddressAndMask(address, mask) {
+        const bits = common.prefixLengthFromMask(new Address6(mask).bigInt(), constants6.BITS);
+        return new Address6(`${address}/${bits}`);
+    }
+    /**
+     * Construct an `Address6` from an address and a Cisco-style wildcard mask
+     * given as separate strings (e.g. `::ffff:ffff:ffff:ffff` for a `/64`).
+     * The wildcard mask is the bitwise inverse of the subnet mask. Throws
+     * `AddressError` if the mask is non-contiguous.
+     * @example
+     * var address = Address6.fromAddressAndWildcardMask('fe80::1', '::ffff:ffff:ffff:ffff');
+     * address.subnetMask; // 64
+     */
+    static fromAddressAndWildcardMask(address, wildcardMask) {
+        const wildcard = new Address6(wildcardMask).bigInt();
+        const allOnes = (BigInt(1) << BigInt(constants6.BITS)) - BigInt(1);
+        const mask = wildcard ^ allOnes;
+        const bits = common.prefixLengthFromMask(mask, constants6.BITS);
+        return new Address6(`${address}/${bits}`);
+    }
+    /**
+     * Construct an `Address6` from a wildcard pattern with trailing `*`
+     * groups. The number of trailing wildcards determines the prefix
+     * length: each `*` represents 16 bits. `::` is expanded to zero groups
+     * (not wildcards) before evaluating trailing wildcards.
+     *
+     * Only trailing whole-group wildcards are supported. Partial-group
+     * wildcards (e.g. `2001:db8::0*`) and interior wildcards (e.g.
+     * `*::1`) throw `AddressError`.
+     * @example
+     * Address6.fromWildcard('2001:db8:*:*:*:*:*:*').subnet;  // '/32'
+     * Address6.fromWildcard('2001:db8::*').subnet;           // '/112'
+     * Address6.fromWildcard('*:*:*:*:*:*:*:*').subnet;       // '/0'
+     */
+    static fromWildcard(input) {
+        if (input.includes('%') || input.includes('/')) {
+            throw new address_error_1.AddressError('Wildcard pattern must not include a zone or CIDR suffix');
+        }
+        const halves = input.split('::');
+        if (halves.length > 2) {
+            throw new address_error_1.AddressError("Wildcard pattern cannot contain more than one '::'");
+        }
+        let groups;
+        if (halves.length === 2) {
+            const left = halves[0] === '' ? [] : halves[0].split(':');
+            const right = halves[1] === '' ? [] : halves[1].split(':');
+            const remaining = constants6.GROUPS - left.length - right.length;
+            if (remaining < 1) {
+                throw new address_error_1.AddressError("Wildcard pattern with '::' has too many groups");
+            }
+            groups = [...left, ...new Array(remaining).fill('0'), ...right];
+        }
+        else {
+            groups = input.split(':');
+        }
+        if (groups.length !== constants6.GROUPS) {
+            throw new address_error_1.AddressError('Wildcard pattern must have 8 groups');
+        }
+        let firstWildcard = -1;
+        for (let i = 0; i < groups.length; i++) {
+            if (groups[i] === '*') {
+                if (firstWildcard === -1) {
+                    firstWildcard = i;
+                }
+            }
+            else if (firstWildcard !== -1) {
+                throw new address_error_1.AddressError('Wildcard `*` must only appear in trailing groups (e.g. `2001:db8:*:*:*:*:*:*`)');
+            }
+        }
+        const trailing = firstWildcard === -1 ? 0 : groups.length - firstWildcard;
+        const replaced = groups.map((g) => (g === '*' ? '0' : g));
+        const subnetBits = constants6.BITS - trailing * 16;
+        return new Address6(`${replaced.join(':')}/${subnetBits}`);
     }
     /**
      * Create an IPv6-mapped address given an IPv4 address
-     * @memberof Address6
-     * @static
      * @param {string} address - An IPv4 address string
      * @returns {Address6}
      * @example
@@ -42421,44 +38573,41 @@ class Address6 {
         return new Address6(`::ffff:${address4.correctForm()}/${mask6}`);
     }
     /**
-     * Return an address from ip6.arpa form
-     * @memberof Address6
-     * @static
+     * Return an address from ip6.arpa form. A full 32-nibble name gives a /128
+     * address; a shorter name, as used for a delegated reverse zone, gives the
+     * network it covers, with a subnet mask of four bits per nibble, so
+     * `fromArpa(x.reverseForm())` round-trips {@link reverseForm} for any prefix.
      * @param {string} arpaFormAddress - an 'ip6.arpa' form address
      * @returns {Adress6}
      * @example
      * var address = Address6.fromArpa(e.f.f.f.3.c.2.6.f.f.f.e.6.6.8.e.1.0.6.7.9.4.e.c.0.0.0.0.1.0.0.2.ip6.arpa.)
      * address.correctForm(); // '2001:0:ce49:7601:e866:efff:62c3:fffe'
+     * Address6.fromArpa('8.b.d.0.1.0.0.2.ip6.arpa.').networkForm(); // '2001:db8::/32'
      */
     static fromArpa(arpaFormAddress) {
-        // remove ending ".ip6.arpa." or just "."
-        let address = arpaFormAddress.replace(/(\.ip6\.arpa)?\.$/, '');
-        const semicolonAmount = 7;
-        // correct ip6.arpa form with ending removed will be 63 characters
-        if (address.length !== 63) {
+        // remove an ending ".ip6.arpa", with or without the root dot
+        const nibbles = arpaFormAddress.replace(/(\.ip6\.arpa)?\.?$/, '');
+        if (!/^[0-9a-f](\.[0-9a-f]){0,31}$/i.test(nibbles)) {
             throw new address_error_1.AddressError("Invalid 'ip6.arpa' form.");
         }
-        const parts = address.split('.').reverse();
-        for (let i = semicolonAmount; i > 0; i--) {
-            const insertIndex = i * 4;
-            parts.splice(insertIndex, 0, ':');
+        const reversed = nibbles.split('.').reverse();
+        const subnetMask = reversed.length * 4;
+        const hex = reversed.join('').padEnd(32, '0');
+        const groups = [];
+        for (let i = 0; i < constants6.GROUPS; i++) {
+            groups.push(hex.slice(i * 4, (i + 1) * 4));
         }
-        address = parts.join('');
-        return new Address6(address);
+        return new Address6(`${groups.join(':')}/${subnetMask}`);
     }
     /**
      * Return the Microsoft UNC transcription of the address
-     * @memberof Address6
-     * @instance
      * @returns {String} the Microsoft UNC transcription of the address
      */
     microsoftTranscription() {
-        return (0, sprintf_js_1.sprintf)('%s.ipv6-literal.net', this.correctForm().replace(/:/g, '-'));
+        return `${this.correctForm().replace(/:/g, '-')}.ipv6-literal.net`;
     }
     /**
      * Return the first n bits of the address, defaulting to the subnet mask
-     * @memberof Address6
-     * @instance
      * @param {number} [mask=subnet] - the number of bits to mask
      * @returns {String} the first n bits of the address as a string
      */
@@ -42467,9 +38616,7 @@ class Address6 {
     }
     /**
      * Return the number of possible subnets of a given size in the address
-     * @memberof Address6
-     * @instance
-     * @param {number} [size=128] - the subnet size
+     * @param {number} [subnetSize=128] - the subnet size
      * @returns {String}
      */
     // TODO: probably useful to have a numeric version of this too
@@ -42480,108 +38627,162 @@ class Address6 {
         if (subnetPowers < 0) {
             return '0';
         }
-        return addCommas(new jsbn_1.BigInteger('2', 10).pow(subnetPowers).toString(10));
+        return addCommas((BigInt('2') ** BigInt(subnetPowers)).toString(10));
     }
     /**
      * Helper function getting start address.
-     * @memberof Address6
-     * @instance
-     * @returns {BigInteger}
+     * @returns {bigint}
      */
     _startAddress() {
-        return new jsbn_1.BigInteger(this.mask() + '0'.repeat(constants6.BITS - this.subnetMask), 2);
+        return BigInt(`0b${this.mask() + '0'.repeat(constants6.BITS - this.subnetMask)}`);
     }
     /**
      * The first address in the range given by this address' subnet
      * Often referred to as the Network Address.
-     * @memberof Address6
-     * @instance
      * @returns {Address6}
      */
     startAddress() {
-        return Address6.fromBigInteger(this._startAddress());
+        return Address6.fromBigInt(this._startAddress());
     }
     /**
      * The first host address in the range given by this address's subnet ie
      * the first address after the Network Address
-     * @memberof Address6
-     * @instance
      * @returns {Address6}
      */
     startAddressExclusive() {
-        const adjust = new jsbn_1.BigInteger('1');
-        return Address6.fromBigInteger(this._startAddress().add(adjust));
+        const adjust = BigInt('1');
+        return Address6.fromBigInt(this._startAddress() + adjust);
     }
     /**
      * Helper function getting end address.
-     * @memberof Address6
-     * @instance
-     * @returns {BigInteger}
+     * @returns {bigint}
      */
     _endAddress() {
-        return new jsbn_1.BigInteger(this.mask() + '1'.repeat(constants6.BITS - this.subnetMask), 2);
+        return BigInt(`0b${this.mask() + '1'.repeat(constants6.BITS - this.subnetMask)}`);
     }
     /**
-     * The last address in the range given by this address' subnet
-     * Often referred to as the Broadcast
-     * @memberof Address6
-     * @instance
+     * The last address in the range given by this address's subnet. IPv6 has
+     * no broadcast address, so this is an ordinary assignable address (in a
+     * 64-bit-interface-identifier subnet it falls inside the reserved
+     * subnet-anycast block of [RFC 2526](https://datatracker.ietf.org/doc/html/rfc2526)).
      * @returns {Address6}
      */
     endAddress() {
-        return Address6.fromBigInteger(this._endAddress());
+        return Address6.fromBigInt(this._endAddress());
     }
     /**
-     * The last host address in the range given by this address's subnet ie
-     * the last address prior to the Broadcast Address
-     * @memberof Address6
-     * @instance
+     * The address one before {@link endAddress}. This is the IPv6 counterpart
+     * of the IPv4 method that skips the broadcast address; IPv6 has no broadcast,
+     * so it drops exactly one address and does not model the 128 reserved
+     * subnet-anycast identifiers of [RFC 2526](https://datatracker.ietf.org/doc/html/rfc2526).
      * @returns {Address6}
      */
     endAddressExclusive() {
-        const adjust = new jsbn_1.BigInteger('1');
-        return Address6.fromBigInteger(this._endAddress().subtract(adjust));
+        const adjust = BigInt('1');
+        return Address6.fromBigInt(this._endAddress() - adjust);
     }
     /**
-     * Return the scope of the address
-     * @memberof Address6
-     * @instance
+     * Returns the address `n` addresses after this one (or before, when `n` is
+     * negative), keeping this address's subnet mask. Throws `AddressError` when
+     * the result would fall outside the IPv6 address space or `n` is not an
+     * integer.
+     * @param {number | bigint} n
+     * @returns {Address6}
+     * @example
+     * new Address6('2001:db8::/64').offset(1).correctForm(); // '2001:db8::1'
+     */
+    offset(n) {
+        return Address6.fromBigInt(common.offsetBigInt(this.bigInt(), n, constants6.BITS, 'IPv6')).withSubnetMask(this.subnetMask);
+    }
+    /**
+     * Returns the network that follows this address's network: the address after
+     * {@link endAddress}, with the same subnet mask. Throws `AddressError` when
+     * this network is the last one in the address space.
+     * @returns {Address6}
+     * @example
+     * new Address6('2001:db8::/64').nextNetwork().networkForm(); // '2001:db8:0:1::/64'
+     */
+    nextNetwork() {
+        return Address6.fromBigInt(common.offsetBigInt(this._endAddress(), 1, constants6.BITS, 'IPv6')).withSubnetMask(this.subnetMask);
+    }
+    withSubnetMask(subnetMask) {
+        return new Address6(`${this.correctForm()}/${subnetMask}`);
+    }
+    /**
+     * The hex form of the subnet mask, e.g. `ffff:ffff:ffff:ffff::` for a
+     * `/64`. Returns an `Address6`; call `.correctForm()` for the string.
+     * @returns {Address6}
+     */
+    subnetMaskAddress() {
+        return Address6.fromBigInt(BigInt(`0b${'1'.repeat(this.subnetMask)}${'0'.repeat(constants6.BITS - this.subnetMask)}`));
+    }
+    /**
+     * The Cisco-style wildcard mask, e.g. `::ffff:ffff:ffff:ffff` for a
+     * `/64`. This is the bitwise inverse of `subnetMaskAddress()`. Returns
+     * an `Address6`; call `.correctForm()` for the string.
+     * @returns {Address6}
+     */
+    wildcardMask() {
+        return Address6.fromBigInt(BigInt(`0b${'0'.repeat(this.subnetMask)}${'1'.repeat(constants6.BITS - this.subnetMask)}`));
+    }
+    /**
+     * The network address in CIDR string form, e.g. `2001:db8::/32` for
+     * `2001:db8::1/32`. For an address with no explicit subnet the prefix
+     * is `/128`, e.g. `networkForm()` on `2001:db8::1` returns
+     * `2001:db8::1/128`.
+     * @returns {string}
+     */
+    networkForm() {
+        return `${this.startAddress().correctForm()}/${this.subnetMask}`;
+    }
+    /**
+     * Return the scope of the address. The 4-bit scope field
+     * ([RFC 4291 §2.7](https://datatracker.ietf.org/doc/html/rfc4291#section-2.7))
+     * is only defined for multicast addresses; for unicast addresses the scope
+     * is derived from the address type per
+     * [RFC 4007 §6](https://datatracker.ietf.org/doc/html/rfc4007#section-6).
      * @returns {String}
      */
     getScope() {
-        let scope = constants6.SCOPES[this.getBits(12, 16).intValue()];
-        if (this.getType() === 'Global unicast' && scope !== 'Link local') {
-            scope = 'Global';
+        const type = this.getType();
+        if (type === 'Multicast' || type.startsWith('Multicast ')) {
+            const scope = constants6.SCOPES[parseInt(this.getBits(12, 16).toString(10), 10)];
+            return scope || 'Unknown';
         }
-        return scope || 'Unknown';
+        // RFC 4291 §2.5.3: the loopback address is treated as having Link-Local
+        // scope. (Multicast scope 1, "Interface-Local", is a different concept
+        // used only for loopback transmission of multicast.)
+        if (type === 'Link-local unicast' || type === 'Loopback') {
+            return 'Link local';
+        }
+        // RFC 4007 §6: the unspecified address has no scope.
+        if (type === 'Unspecified') {
+            return 'Unknown';
+        }
+        return 'Global';
     }
     /**
      * Return the type of the address
-     * @memberof Address6
-     * @instance
      * @returns {String}
      */
     getType() {
-        for (const subnet of Object.keys(constants6.TYPES)) {
-            if (this.isInSubnet(new Address6(subnet))) {
-                return constants6.TYPES[subnet];
+        for (let i = 0; i < TYPE_SUBNETS.length; i++) {
+            const entry = TYPE_SUBNETS[i];
+            if (this.isHostInSubnet(entry[0])) {
+                return entry[1];
             }
         }
         return 'Global unicast';
     }
     /**
-     * Return the bits in the given range as a BigInteger
-     * @memberof Address6
-     * @instance
-     * @returns {BigInteger}
+     * Return the bits in the given range as a BigInt
+     * @returns {bigint}
      */
     getBits(start, end) {
-        return new jsbn_1.BigInteger(this.getBitsBase2(start, end), 2);
+        return BigInt(`0b${this.getBitsBase2(start, end)}`);
     }
     /**
      * Return the bits in the given range as a base-2 string
-     * @memberof Address6
-     * @instance
      * @returns {String}
      */
     getBitsBase2(start, end) {
@@ -42589,8 +38790,6 @@ class Address6 {
     }
     /**
      * Return the bits in the given range as a base-16 string
-     * @memberof Address6
-     * @instance
      * @returns {String}
      */
     getBitsBase16(start, end) {
@@ -42604,8 +38803,6 @@ class Address6 {
     }
     /**
      * Return the bits that are set past the subnet mask length
-     * @memberof Address6
-     * @instance
      * @returns {String}
      */
     getBitsPastSubnet() {
@@ -42613,10 +38810,8 @@ class Address6 {
     }
     /**
      * Return the reversed ip6.arpa form of the address
-     * @memberof Address6
      * @param {Object} options
      * @param {boolean} options.omitSuffix - omit the "ip6.arpa" suffix
-     * @instance
      * @returns {String}
      */
     reverseForm(options) {
@@ -42634,7 +38829,7 @@ class Address6 {
             if (options.omitSuffix) {
                 return reversed;
             }
-            return (0, sprintf_js_1.sprintf)('%s.ip6.arpa.', reversed);
+            return `${reversed}.ip6.arpa.`;
         }
         if (options.omitSuffix) {
             return '';
@@ -42642,10 +38837,10 @@ class Address6 {
         return 'ip6.arpa.';
     }
     /**
-     * Return the correct form of the address
-     * @memberof Address6
-     * @instance
-     * @returns {String}
+     * Returns the address in correct form, per
+     * [RFC 5952](https://datatracker.ietf.org/doc/html/rfc5952): leading zeros
+     * stripped, the longest run of zero groups collapsed to `::`, and hex digits
+     * lowercased (e.g. `2001:db8::1`). This is the recommended form for display.
      */
     correctForm() {
         let i;
@@ -42683,14 +38878,12 @@ class Address6 {
         }
         let correct = groups.join(':');
         correct = correct.replace(/^compact$/, '::');
-        correct = correct.replace(/^compact|compact$/, ':');
+        correct = correct.replace(/(^compact)|(compact$)/, ':');
         correct = correct.replace(/compact/, '');
         return correct;
     }
     /**
      * Return a zero-padded base-2 string representation of the address
-     * @memberof Address6
-     * @instance
      * @returns {String}
      * @example
      * var address = new Address6('2001:4860:4001:803::1011');
@@ -42699,37 +38892,68 @@ class Address6 {
      * //  0000000000000000000000000000000000000000000000000001000000010001'
      */
     binaryZeroPad() {
-        return this.bigInteger().toString(2).padStart(constants6.BITS, '0');
+        if (this._binaryZeroPad === undefined) {
+            this._binaryZeroPad = this.bigInt().toString(2).padStart(constants6.BITS, '0');
+        }
+        return this._binaryZeroPad;
     }
+    /**
+     * Parses a v4-in-v6 string (e.g. `::ffff:192.168.0.1`) by extracting the
+     * trailing IPv4 address into `this.address4` / `this.parsedAddress4` and
+     * returning the address with the v4 portion converted to two v6 groups.
+     * Used internally by `parse()`.
+     */
     // TODO: Improve the semantics of this helper function
     parse4in6(address) {
+        if (address.indexOf('.') === -1) {
+            return address;
+        }
         const groups = address.split(':');
         const lastGroup = groups.slice(-1)[0];
+        // RE_ADDRESS rejects octets with a leading zero, so a dotted-quad tail is
+        // matched permissively first: that way this notation still gets its own
+        // message with the offending octet highlighted, rather than falling
+        // through as an unrecognized group.
+        const v4Octets = lastGroup.split('.');
+        if (v4Octets.length === constants4.GROUPS &&
+            v4Octets.every((octet) => /^\d{1,3}$/.test(octet))) {
+            if (v4Octets.some((octet) => /^0\d/.test(octet))) {
+                // The prefix groups haven't been through the bad-character check
+                // yet, so escape them before including in the error HTML.
+                const highlighted = v4Octets.map(spanLeadingZeroes4).join('.');
+                const prefix = groups.slice(0, -1).map(helpers.escapeHtml).join(':');
+                const separator = groups.length > 1 ? ':' : '';
+                throw new address_error_1.AddressError("IPv4 addresses can't have leading zeroes.", `${prefix}${separator}${highlighted}`);
+            }
+        }
         const address4 = lastGroup.match(constants4.RE_ADDRESS);
         if (address4) {
             this.parsedAddress4 = address4[0];
-            this.address4 = new ipv4_1.Address4(this.parsedAddress4);
-            for (let i = 0; i < this.address4.groups; i++) {
-                if (/^0[0-9]+/.test(this.address4.parsedAddress[i])) {
-                    throw new address_error_1.AddressError("IPv4 addresses can't have leading zeroes.", address.replace(constants4.RE_ADDRESS, this.address4.parsedAddress.map(spanLeadingZeroes4).join('.')));
-                }
-            }
+            const v4Suffix = this.subnetMask >= 96 ? `/${this.subnetMask - 96}` : '';
+            this.address4 = new ipv4_1.Address4(`${this.parsedAddress4}${v4Suffix}`);
             this.v4 = true;
             groups[groups.length - 1] = this.address4.toGroup6();
             address = groups.join(':');
         }
         return address;
     }
+    /**
+     * Parses an IPv6 address string into its 8 hexadecimal groups (expanding
+     * any `::` elision and any trailing v4-in-v6 portion) and stores the result
+     * on `this.parsedAddress`. Called automatically by the constructor; you
+     * typically don't need to call it directly. Throws `AddressError` if the
+     * input is malformed.
+     */
     // TODO: Make private?
     parse(address) {
         address = this.parse4in6(address);
         const badCharacters = address.match(constants6.RE_BAD_CHARACTERS);
         if (badCharacters) {
-            throw new address_error_1.AddressError((0, sprintf_js_1.sprintf)('Bad character%s detected in address: %s', badCharacters.length > 1 ? 's' : '', badCharacters.join('')), address.replace(constants6.RE_BAD_CHARACTERS, '<span class="parse-error">$1</span>'));
+            throw new address_error_1.AddressError(`Bad character${badCharacters.length > 1 ? 's' : ''} detected in address: ${badCharacters.join('')}`, address.replace(constants6.RE_BAD_CHARACTERS, '<span class="parse-error">$1</span>'));
         }
         const badAddress = address.match(constants6.RE_BAD_ADDRESS);
         if (badAddress) {
-            throw new address_error_1.AddressError((0, sprintf_js_1.sprintf)('Address failed regex: %s', badAddress.join('')), address.replace(constants6.RE_BAD_ADDRESS, '<span class="parse-error">$1</span>'));
+            throw new address_error_1.AddressError(`Address failed regex: ${badAddress.join('')}`, address.replace(constants6.RE_BAD_ADDRESS, '<span class="parse-error">$1</span>'));
         }
         let groups = [];
         const halves = address.split('::');
@@ -42762,43 +38986,41 @@ class Address6 {
         else {
             throw new address_error_1.AddressError('Too many :: groups found');
         }
-        groups = groups.map((group) => (0, sprintf_js_1.sprintf)('%x', parseInt(group, 16)));
+        groups = groups.map((group) => parseInt(group, 16).toString(16));
         if (groups.length !== this.groups) {
             throw new address_error_1.AddressError('Incorrect number of groups found');
         }
         return groups;
     }
     /**
-     * Return the canonical form of the address
-     * @memberof Address6
-     * @instance
-     * @returns {String}
+     * Returns the canonical (fully expanded) form of the address: all 8 groups,
+     * each padded to 4 hex digits, with no `::` collapsing
+     * (e.g. `2001:0db8:0000:0000:0000:0000:0000:0001`). Useful for sorting and
+     * byte-exact comparison.
      */
     canonicalForm() {
         return this.parsedAddress.map(paddedHex).join(':');
     }
     /**
      * Return the decimal form of the address
-     * @memberof Address6
-     * @instance
      * @returns {String}
      */
     decimal() {
-        return this.parsedAddress.map((n) => (0, sprintf_js_1.sprintf)('%05d', parseInt(n, 16))).join(':');
+        return this.parsedAddress.map((n) => parseInt(n, 16).toString(10).padStart(5, '0')).join(':');
     }
     /**
-     * Return the address as a BigInteger
-     * @memberof Address6
-     * @instance
-     * @returns {BigInteger}
+     * Return the address as a BigInt
+     * @returns {bigint}
      */
-    bigInteger() {
-        return new jsbn_1.BigInteger(this.parsedAddress.map(paddedHex).join(''), 16);
+    bigInt() {
+        return BigInt(`0x${this.parsedAddress.map(paddedHex).join('')}`);
     }
     /**
-     * Return the last two groups of this address as an IPv4 address string
-     * @memberof Address6
-     * @instance
+     * Return the last two groups of this address as an IPv4 address string.
+     * If this address carries a CIDR prefix that covers the trailing 32 bits
+     * (i.e. `subnetMask >= 96`), the resulting `Address4` inherits the
+     * corresponding v4 prefix (`subnetMask - 96`); otherwise it defaults to
+     * `/32`.
      * @returns {Address4}
      * @example
      * var address = new Address6('2001:4860:4001::1825:bf11');
@@ -42806,12 +39028,21 @@ class Address6 {
      */
     to4() {
         const binary = this.binaryZeroPad().split('');
-        return ipv4_1.Address4.fromHex(new jsbn_1.BigInteger(binary.slice(96, 128).join(''), 2).toString(16));
+        const hex = BigInt(`0b${binary.slice(96, 128).join('')}`)
+            .toString(16)
+            .padStart(8, '0');
+        if (this.subnetMask >= 96) {
+            const v4Mask = this.subnetMask - 96;
+            const groups = [];
+            for (let i = 0; i < 8; i += 2) {
+                groups.push(parseInt(hex.slice(i, i + 2), 16));
+            }
+            return new ipv4_1.Address4(`${groups.join('.')}/${v4Mask}`);
+        }
+        return ipv4_1.Address4.fromHex(hex);
     }
     /**
      * Return the v4-in-v6 form of the address
-     * @memberof Address6
-     * @instance
      * @returns {String}
      */
     to4in6() {
@@ -42822,13 +39053,13 @@ class Address6 {
         if (!/:$/.test(correct)) {
             infix = ':';
         }
-        return correct + infix + address4.address;
+        return correct + infix + address4.correctForm();
     }
     /**
-     * Return an object containing the Teredo properties of the address
-     * @memberof Address6
-     * @instance
-     * @returns {Object}
+     * Decodes the Teredo tunneling fields embedded in this address. Returns the
+     * Teredo prefix, server IPv4, client IPv4, raw flag bits, cone-NAT flag,
+     * UDP port, and Microsoft-format flag breakdown (reserved, universal/local,
+     * group/individual, nonce). Only meaningful for addresses in `2001::/32`.
      */
     inspectTeredo() {
         /*
@@ -42853,18 +39084,19 @@ class Address6 {
           public IPv4 address of the NAT with all bits inverted.
         */
         const prefix = this.getBitsBase16(0, 32);
-        const udpPort = this.getBits(80, 96).xor(new jsbn_1.BigInteger('ffff', 16)).toString();
+        const bitsForUdpPort = this.getBits(80, 96);
+        const udpPort = (bitsForUdpPort ^ BigInt('0xffff')).toString();
         const server4 = ipv4_1.Address4.fromHex(this.getBitsBase16(32, 64));
-        const client4 = ipv4_1.Address4.fromHex(this.getBits(96, 128).xor(new jsbn_1.BigInteger('ffffffff', 16)).toString(16));
-        const flags = this.getBits(64, 80);
+        const bitsForClient4 = this.getBits(96, 128);
+        const client4 = ipv4_1.Address4.fromHex((bitsForClient4 ^ BigInt('0xffffffff')).toString(16).padStart(8, '0'));
         const flagsBase2 = this.getBitsBase2(64, 80);
-        const coneNat = flags.testBit(15);
-        const reserved = flags.testBit(14);
-        const groupIndividual = flags.testBit(8);
-        const universalLocal = flags.testBit(9);
-        const nonce = new jsbn_1.BigInteger(flagsBase2.slice(2, 6) + flagsBase2.slice(8, 16), 2).toString(10);
+        const coneNat = (0, common_1.testBit)(flagsBase2, 15);
+        const reserved = (0, common_1.testBit)(flagsBase2, 14);
+        const groupIndividual = (0, common_1.testBit)(flagsBase2, 8);
+        const universalLocal = (0, common_1.testBit)(flagsBase2, 9);
+        const nonce = BigInt(`0b${flagsBase2.slice(2, 6) + flagsBase2.slice(8, 16)}`).toString(10);
         return {
-            prefix: (0, sprintf_js_1.sprintf)('%s:%s', prefix.slice(0, 4), prefix.slice(4, 8)),
+            prefix: `${prefix.slice(0, 4)}:${prefix.slice(4, 8)}`,
             server4: server4.address,
             client4: client4.address,
             flags: flagsBase2,
@@ -42879,10 +39111,9 @@ class Address6 {
         };
     }
     /**
-     * Return an object containing the 6to4 properties of the address
-     * @memberof Address6
-     * @instance
-     * @returns {Object}
+     * Decodes the 6to4 tunneling fields embedded in this address. Returns the
+     * 6to4 prefix and the embedded IPv4 gateway address. Only meaningful for
+     * addresses in `2002::/16`.
      */
     inspect6to4() {
         /*
@@ -42892,14 +39123,12 @@ class Address6 {
         const prefix = this.getBitsBase16(0, 16);
         const gateway = ipv4_1.Address4.fromHex(this.getBitsBase16(16, 48));
         return {
-            prefix: (0, sprintf_js_1.sprintf)('%s', prefix.slice(0, 4)),
+            prefix: prefix.slice(0, 4),
             gateway: gateway.address,
         };
     }
     /**
      * Return a v6 6to4 address from a v6 v4inv6 address
-     * @memberof Address6
-     * @instance
      * @returns {Address6}
      */
     to6to4() {
@@ -42916,137 +39145,390 @@ class Address6 {
         return new Address6(addr6to4);
     }
     /**
-     * Return a byte array
-     * @memberof Address6
-     * @instance
+     * Embed an IPv4 address into a NAT64 IPv6 address using the encoding
+     * defined by [RFC 6052](https://datatracker.ietf.org/doc/html/rfc6052).
+     * The default prefix is the well-known prefix `64:ff9b::/96`. The prefix
+     * length must be one of 32, 40, 48, 56, 64, or 96; for prefixes shorter
+     * than /64 the IPv4 octets are split around the reserved bits 64–71.
+     * @example
+     * Address6.fromAddress4Nat64('192.0.2.33').correctForm(); // '64:ff9b::c000:221'
+     * Address6.fromAddress4Nat64('192.0.2.33', '2001:db8::/32').correctForm(); // '2001:db8:c000:221::'
+     */
+    static fromAddress4Nat64(address, prefix = '64:ff9b::/96') {
+        const v4 = new ipv4_1.Address4(address);
+        const prefix6 = new Address6(prefix);
+        const pl = prefix6.subnetMask;
+        if (pl !== 32 && pl !== 40 && pl !== 48 && pl !== 56 && pl !== 64 && pl !== 96) {
+            throw new address_error_1.AddressError('NAT64 prefix length must be 32, 40, 48, 56, 64, or 96');
+        }
+        const prefixBits = prefix6.binaryZeroPad();
+        const v4Bits = v4.binaryZeroPad();
+        let bits;
+        if (pl === 96) {
+            bits = prefixBits.slice(0, 96) + v4Bits;
+        }
+        else {
+            const beforeU = 64 - pl;
+            bits = [
+                prefixBits.slice(0, pl),
+                v4Bits.slice(0, beforeU),
+                // Bits 64 to 71 are the reserved u octet and are always zero.
+                '00000000',
+                v4Bits.slice(beforeU),
+                '0'.repeat(128 - 72 - (32 - beforeU)),
+            ].join('');
+        }
+        const hex = BigInt(`0b${bits}`).toString(16).padStart(32, '0');
+        const groups = [];
+        for (let i = 0; i < 8; i++) {
+            groups.push(hex.slice(i * 4, (i + 1) * 4));
+        }
+        return new Address6(groups.join(':'));
+    }
+    /**
+     * Extract the embedded IPv4 address from a NAT64 IPv6 address using the
+     * encoding defined by [RFC 6052](https://datatracker.ietf.org/doc/html/rfc6052).
+     * The default prefix is the well-known prefix `64:ff9b::/96`. Returns
+     * `null` if this address is not contained within the given prefix.
+     * @example
+     * new Address6('64:ff9b::c000:221').toAddress4Nat64()!.correctForm(); // '192.0.2.33'
+     */
+    toAddress4Nat64(prefix = '64:ff9b::/96') {
+        const prefix6 = new Address6(prefix);
+        const pl = prefix6.subnetMask;
+        if (pl !== 32 && pl !== 40 && pl !== 48 && pl !== 56 && pl !== 64 && pl !== 96) {
+            throw new address_error_1.AddressError('NAT64 prefix length must be 32, 40, 48, 56, 64, or 96');
+        }
+        if (!this.isHostInSubnet(prefix6)) {
+            return null;
+        }
+        const bits = this.binaryZeroPad();
+        let v4Bits;
+        if (pl === 96) {
+            v4Bits = bits.slice(96, 128);
+        }
+        else {
+            const beforeU = 64 - pl;
+            v4Bits = bits.slice(pl, pl + beforeU) + bits.slice(72, 72 + (32 - beforeU));
+        }
+        const octets = [];
+        for (let i = 0; i < 4; i++) {
+            octets.push(parseInt(v4Bits.slice(i * 8, (i + 1) * 8), 2).toString());
+        }
+        return new ipv4_1.Address4(octets.join('.'));
+    }
+    /**
+     * Return a byte array.
+     *
+     * To get a Node.js `Buffer`, wrap the result: `Buffer.from(address.toByteArray())`.
      * @returns {Array}
      */
     toByteArray() {
-        const byteArray = this.bigInteger().toByteArray();
-        // work around issue where `toByteArray` returns a leading 0 element
-        if (byteArray.length === 17 && byteArray[0] === 0) {
-            return byteArray.slice(1);
+        const value = this.bigInt()
+            .toString(16)
+            .padStart(constants6.BITS / 4, '0');
+        const bytes = [];
+        for (let i = 0, length = value.length; i < length; i += 2) {
+            bytes.push(parseInt(value.substring(i, i + 2), 16));
         }
-        return byteArray;
+        return bytes;
     }
     /**
-     * Return an unsigned byte array
-     * @memberof Address6
-     * @instance
+     * Return an unsigned byte array.
+     *
+     * To get a Node.js `Buffer`, wrap the result: `Buffer.from(address.toUnsignedByteArray())`.
      * @returns {Array}
      */
     toUnsignedByteArray() {
+        // toByteArray() emits 0 to 255, so unsigning it is an identity mapping and
+        // the two methods return equal arrays. 11.0.0 keeps one of them and makes
+        // this a deprecated alias; test/common-test.ts fails at that version.
         return this.toByteArray().map(unsignByte);
     }
     /**
-     * Convert a byte array to an Address6 object
-     * @memberof Address6
-     * @static
+     * Convert a byte array to an Address6 object.
+     *
+     * Accepts unsigned bytes (0 to 255) or signed bytes (-128 to 127, as an
+     * `Int8Array` or a Java `byte[]` holds them), folding signed values to their
+     * unsigned equivalent. Throws `AddressError` unless given exactly 16
+     * integers from -128 to 255.
+     *
+     * To convert from a Node.js `Buffer`, spread it: `Address6.fromByteArray([...buf])`.
      * @returns {Address6}
      */
     static fromByteArray(bytes) {
+        // Address4.fromByteArray takes unsigned bytes only. 11.0.0 aligns this
+        // method with it, at which point the -128 floor here, unsignByte, and the
+        // mapping below all go; test/common-test.ts fails at that version.
+        common.assertByteArray(bytes, 16, 'IPv6', -128);
         return this.fromUnsignedByteArray(bytes.map(unsignByte));
     }
     /**
-     * Convert an unsigned byte array to an Address6 object
-     * @memberof Address6
-     * @static
+     * Convert an unsigned byte array to an Address6 object.
+     *
+     * Throws `AddressError` unless given exactly 16 integers from 0 to 255.
+     *
+     * To convert from a Node.js `Buffer`, spread it: `Address6.fromUnsignedByteArray([...buf])`.
      * @returns {Address6}
      */
     static fromUnsignedByteArray(bytes) {
-        const BYTE_MAX = new jsbn_1.BigInteger('256', 10);
-        let result = new jsbn_1.BigInteger('0', 10);
-        let multiplier = new jsbn_1.BigInteger('1', 10);
+        common.assertByteArray(bytes, 16, 'IPv6', 0);
+        const BYTE_MAX = BigInt('256');
+        let result = BigInt('0');
+        let multiplier = BigInt('1');
         for (let i = bytes.length - 1; i >= 0; i--) {
-            result = result.add(multiplier.multiply(new jsbn_1.BigInteger(bytes[i].toString(10), 10)));
-            multiplier = multiplier.multiply(BYTE_MAX);
+            result += multiplier * BigInt(bytes[i].toString(10));
+            multiplier *= BYTE_MAX;
         }
-        return Address6.fromBigInteger(result);
+        return Address6.fromBigInt(result);
     }
     /**
      * Returns true if the address is in the canonical form, false otherwise
-     * @memberof Address6
-     * @instance
      * @returns {boolean}
      */
     isCanonical() {
         return this.addressMinusSuffix === this.canonicalForm();
     }
     /**
-     * Returns true if the address is a link local address, false otherwise
-     * @memberof Address6
-     * @instance
+     * Returns true if the address is a link-local unicast address in `fe80::/10`
+     * ([RFC 4291 §2.4](https://datatracker.ietf.org/doc/html/rfc4291#section-2.4))
+     * or an IPv4-mapped / NAT64 address whose embedded IPv4 address is link-local
+     * (`169.254.0.0/16`, e.g. `::ffff:169.254.169.254`), false otherwise.
      * @returns {boolean}
      */
     isLinkLocal() {
-        // Zeroes are required, i.e. we can't check isInSubnet with 'fe80::/10'
-        if (this.getBitsBase2(0, 64) ===
-            '1111111010000000000000000000000000000000000000000000000000000000') {
-            return true;
+        const embedded = this.embeddedIPv4();
+        if (embedded) {
+            return embedded.isLinkLocal();
         }
-        return false;
+        return this.isHostInSubnet(LINK_LOCAL_SUBNET);
     }
     /**
      * Returns true if the address is a multicast address, false otherwise
-     * @memberof Address6
-     * @instance
      * @returns {boolean}
      */
     isMulticast() {
-        return this.getType() === 'Multicast';
+        const embedded = this.embeddedIPv4();
+        if (embedded) {
+            return embedded.isMulticast();
+        }
+        const type = this.getType();
+        return type === 'Multicast' || type.startsWith('Multicast ');
     }
     /**
-     * Returns true if the address is a v4-in-v6 address, false otherwise
-     * @memberof Address6
-     * @instance
+     * Returns true if the address was written in v4-in-v6 dotted-quad notation
+     * (e.g. `::ffff:127.0.0.1`), false otherwise. This is a notation-level flag
+     * and does not reflect whether the address bits lie in the IPv4-mapped
+     * (`::ffff:0:0/96`) subnet — for that, see {@link isMapped4}.
      * @returns {boolean}
      */
     is4() {
         return this.v4;
     }
     /**
+     * Returns true if the address is an IPv4-mapped IPv6 address in
+     * `::ffff:0:0/96` ([RFC 4291 §2.5.5.2](https://datatracker.ietf.org/doc/html/rfc4291#section-2.5.5.2)),
+     * false otherwise. Unlike {@link is4}, this checks the underlying address
+     * bits rather than the textual notation, so `::ffff:127.0.0.1` and
+     * `::ffff:7f00:1` both return true.
+     * @returns {boolean}
+     */
+    isMapped4() {
+        return this.isHostInSubnet(IPV4_MAPPED_SUBNET);
+    }
+    /**
+     * If this address embeds a routable IPv4 address — i.e. it is IPv4-mapped
+     * (`::ffff:0:0/96`) or sits in the NAT64 well-known prefix (`64:ff9b::/96`,
+     * [RFC 6052](https://datatracker.ietf.org/doc/html/rfc6052)) — return that
+     * embedded address as an {@link Address4}; otherwise return null.
+     *
+     * The special-property checks (`isLoopback`, `isLinkLocal`, `isMulticast`,
+     * `isUnspecified`, `isPrivate`, `isCGNAT`, `isBroadcast`) call this first and
+     * delegate to the embedded {@link Address4} when present, so a literal such as
+     * `::ffff:127.0.0.1` is classified by what it actually reaches (loopback)
+     * rather than by its IPv6 wrapper (which `getType()` reports as IPv4-mapped).
+     * This matters wherever the checks back a trust-boundary decision (e.g. an
+     * SSRF allow/deny filter): without normalization, `::ffff:10.0.0.1`,
+     * `::ffff:169.254.169.254`, `64:ff9b::7f00:1`, etc. would all read as
+     * non-internal.
+     * @returns {Address4 | null}
+     */
+    embeddedIPv4() {
+        if (this.isMapped4() || this.isHostInSubnet(NAT64_WELL_KNOWN_SUBNET)) {
+            return this.to4();
+        }
+        return null;
+    }
+    /**
      * Returns true if the address is a Teredo address, false otherwise
-     * @memberof Address6
-     * @instance
      * @returns {boolean}
      */
     isTeredo() {
-        return this.isInSubnet(new Address6('2001::/32'));
+        return this.isHostInSubnet(TEREDO_SUBNET);
     }
     /**
      * Returns true if the address is a 6to4 address, false otherwise
-     * @memberof Address6
-     * @instance
      * @returns {boolean}
      */
     is6to4() {
-        return this.isInSubnet(new Address6('2002::/16'));
+        return this.isHostInSubnet(SIX_TO_FOUR_SUBNET);
     }
     /**
      * Returns true if the address is a loopback address, false otherwise
-     * @memberof Address6
-     * @instance
      * @returns {boolean}
      */
     isLoopback() {
+        const embedded = this.embeddedIPv4();
+        if (embedded) {
+            return embedded.isLoopback();
+        }
         return this.getType() === 'Loopback';
+    }
+    /**
+     * Returns true if the address is a Unique Local Address in `fc00::/7` ([RFC 4193](https://datatracker.ietf.org/doc/html/rfc4193)). ULAs are the IPv6 equivalent of IPv4 [RFC 1918](https://datatracker.ietf.org/doc/html/rfc1918) private addresses.
+     * @returns {boolean}
+     */
+    isULA() {
+        return this.isHostInSubnet(ULA_SUBNET);
+    }
+    /**
+     * Returns true if the address is private, i.e. a Unique Local Address in
+     * `fc00::/7` ([RFC 4193](https://datatracker.ietf.org/doc/html/rfc4193)), an
+     * address in the NAT64 local-use range `64:ff9b:1::/48`
+     * ([RFC 8215](https://datatracker.ietf.org/doc/html/rfc8215)), or an
+     * IPv4-mapped / NAT64 well-known address whose embedded IPv4 address is in
+     * one of the [RFC 1918](https://datatracker.ietf.org/doc/html/rfc1918)
+     * private ranges (e.g. `::ffff:10.0.0.1`). This is the IPv6 counterpart to
+     * {@link Address4.isPrivate}; use it instead of {@link isULA} when you need to
+     * catch mapped RFC 1918 addresses as well as native ULAs.
+     *
+     * The local-use NAT64 range is reported private as a whole rather than by
+     * its embedded IPv4 address: an operator may carve a prefix of any RFC 6052
+     * length out of `64:ff9b:1::/48`, so the same bits decode to different IPv4
+     * addresses under different deployments and no single decoding is correct.
+     * Use {@link toAddress4Nat64} with the deployment's prefix to decode one.
+     * @returns {boolean}
+     */
+    isPrivate() {
+        const embedded = this.embeddedIPv4();
+        if (embedded) {
+            return embedded.isPrivate();
+        }
+        return this.isULA() || this.isHostInSubnet(NAT64_LOCAL_USE_SUBNET);
+    }
+    /**
+     * Returns true if the address is an IPv4-mapped / NAT64 address whose embedded
+     * IPv4 address is in the carrier-grade NAT range `100.64.0.0/10`
+     * ([RFC 6598](https://datatracker.ietf.org/doc/html/rfc6598)), false
+     * otherwise. There is no native IPv6 CGNAT range, so this only ever returns
+     * true for an embedded IPv4 address (e.g. `::ffff:100.64.0.1`).
+     * @returns {boolean}
+     */
+    isCGNAT() {
+        const embedded = this.embeddedIPv4();
+        if (embedded) {
+            return embedded.isCGNAT();
+        }
+        return false;
+    }
+    /**
+     * Returns true if the address is an IPv4-mapped / NAT64 address whose embedded
+     * IPv4 address is the limited broadcast address `255.255.255.255`
+     * ([RFC 919](https://datatracker.ietf.org/doc/html/rfc919)), false otherwise.
+     * There is no IPv6 broadcast, so this only ever returns true for an embedded
+     * IPv4 address (e.g. `::ffff:255.255.255.255`).
+     * @returns {boolean}
+     */
+    isBroadcast() {
+        const embedded = this.embeddedIPv4();
+        if (embedded) {
+            return embedded.isBroadcast();
+        }
+        return false;
+    }
+    /**
+     * Returns true if the address is the unspecified address `::`.
+     * @returns {boolean}
+     */
+    isUnspecified() {
+        const embedded = this.embeddedIPv4();
+        if (embedded) {
+            return embedded.isUnspecified();
+        }
+        return this.getType() === 'Unspecified';
+    }
+    /**
+     * Returns true if the address is in the documentation prefix `2001:db8::/32` ([RFC 3849](https://datatracker.ietf.org/doc/html/rfc3849)).
+     * @returns {boolean}
+     */
+    isDocumentation() {
+        return DOCUMENTATION_SUBNETS.some((subnet) => this.isHostInSubnet(subnet));
+    }
+    /**
+     * Returns true if the address is in the benchmarking range `2001:2::/48`
+     * ([RFC 5180](https://datatracker.ietf.org/doc/html/rfc5180)) or is an
+     * IPv4-mapped / NAT64 address whose embedded IPv4 address is in
+     * `198.18.0.0/15`, false otherwise.
+     * @returns {boolean}
+     */
+    isBenchmarking() {
+        const embedded = this.embeddedIPv4();
+        if (embedded) {
+            return embedded.isBenchmarking();
+        }
+        return this.isHostInSubnet(BENCHMARKING_SUBNET);
+    }
+    /**
+     * Returns true if the address is globally reachable: inside the global
+     * unicast allocation `2000::/3` (the only range the [IANA IPv6 Address Space
+     * Registry](https://www.iana.org/assignments/ipv6-address-space/) assigns
+     * for global unicast; everything else is reserved, ULA, link-local, or
+     * multicast) and not in any block the [IANA IPv6 Special-Purpose Address Registry](https://www.iana.org/assignments/iana-ipv6-special-registry/)
+     * marks as not globally reachable. An IPv4-mapped or NAT64 well-known
+     * address answers for its embedded IPv4 address, so `::ffff:10.0.0.1` and
+     * `64:ff9b::7f00:1` are not global. Teredo (`2001::/32`) and 6to4
+     * (`2002::/16`) are not global either: the registry lists them as N/A and a
+     * packet to one needs a relay.
+     *
+     * This covers everything the individual classifiers name and the blocks they
+     * do not: the discard-only prefix `100::/64`, the IETF protocol assignments
+     * in `2001::/23`, the deprecated site-local `fec0::/10` and IPv4-compatible
+     * `::/96` ranges, and unallocated space such as `4000::/3`. It is the single
+     * predicate to use where a request must not reach an internal or
+     * special-purpose destination; see SECURITY.md.
+     * @returns {boolean}
+     */
+    isGlobal() {
+        const embedded = this.embeddedIPv4();
+        if (embedded) {
+            return embedded.isGlobal();
+        }
+        return (this.isHostInSubnet(GLOBAL_UNICAST_SUBNET) &&
+            common.isGloballyReachable.call(this, SPECIAL_PURPOSE_V6));
     }
     // #endregion
     // #region HTML
     /**
-     * @returns {String} the address in link form with a default port of 80
+     * Returns the address as an HTTP URL with the host bracketed, e.g.
+     * `http://[2001:db8::1]/`. If `optionalPort` is provided it is appended,
+     * e.g. `http://[2001:db8::1]:8080/`.
      */
     href(optionalPort) {
         if (optionalPort === undefined) {
             optionalPort = '';
         }
         else {
-            optionalPort = (0, sprintf_js_1.sprintf)(':%s', optionalPort);
+            optionalPort = `:${optionalPort}`;
         }
-        return (0, sprintf_js_1.sprintf)('http://[%s]%s/', this.correctForm(), optionalPort);
+        return `http://[${this.correctForm()}]${optionalPort}/`;
     }
     /**
-     * @returns {String} a link suitable for conveying the address via a URL hash
+     * Returns an HTML `<a>` element whose `href` encodes the address in a URL
+     * hash fragment (default prefix `/#address=`). Useful for linking between
+     * pages of an address-inspector UI.
+     * @param options.className - CSS class for the rendered `<a>` element
+     * @param options.prefix - hash prefix prepended to the address (default `/#address=`)
+     * @param options.v4 - when true, render the address in v4-in-v6 form
      */
     link(options) {
         if (!options) {
@@ -43065,25 +39547,34 @@ class Address6 {
         if (options.v4) {
             formFunction = this.to4in6;
         }
+        const form = formFunction.call(this);
+        const safeHref = helpers.escapeHtml(`${options.prefix}${form}`);
+        const safeForm = helpers.escapeHtml(form);
         if (options.className) {
-            return (0, sprintf_js_1.sprintf)('<a href="%1$s%2$s" class="%3$s">%2$s</a>', options.prefix, formFunction.call(this), options.className);
+            const safeClass = helpers.escapeHtml(options.className);
+            return `<a href="${safeHref}" class="${safeClass}">${safeForm}</a>`;
         }
-        return (0, sprintf_js_1.sprintf)('<a href="%1$s%2$s">%2$s</a>', options.prefix, formFunction.call(this));
+        return `<a href="${safeHref}">${safeForm}</a>`;
     }
     /**
-     * Groups an address
+     * Groups an address.
+     *
+     * Returns an HTML fragment: each group is wrapped in a `<span>` carrying
+     * the group classes an address-inspector UI hovers on. The address content
+     * is HTML-escaped; anything you concatenate around it is your
+     * responsibility.
      * @returns {String}
      */
     group() {
         if (this.elidedGroups === 0) {
             // The simple case
-            return helpers.simpleGroup(this.address).join(':');
+            return helpers.simpleGroup(this.addressMinusSuffix).join(':');
         }
         assert(typeof this.elidedGroups === 'number');
         assert(typeof this.elisionBegin === 'number');
         // The elided case
         const output = [];
-        const [left, right] = this.address.split('::');
+        const [left, right] = this.addressMinusSuffix.split('::');
         if (left.length) {
             output.push(...helpers.simpleGroup(left));
         }
@@ -43092,9 +39583,9 @@ class Address6 {
         }
         const classes = ['hover-group'];
         for (let i = this.elisionBegin; i < this.elisionBegin + this.elidedGroups; i++) {
-            classes.push((0, sprintf_js_1.sprintf)('group-%d', i));
+            classes.push(`group-${i}`);
         }
-        output.push((0, sprintf_js_1.sprintf)('<span class="%s"></span>', classes.join(' ')));
+        output.push(`<span class="${classes.join(' ')}"></span>`);
         if (right.length) {
             output.push(...helpers.simpleGroup(right, this.elisionEnd));
         }
@@ -43113,8 +39604,6 @@ class Address6 {
     /**
      * Generate a regular expression string that can be used to find or validate
      * all variations of this address
-     * @memberof Address6
-     * @instance
      * @param {boolean} substringSearch
      * @returns {string}
      */
@@ -43159,8 +39648,6 @@ class Address6 {
     /**
      * Generate a regular expression that can be used to find or validate all
      * variations of this address.
-     * @memberof Address6
-     * @instance
      * @param {boolean} substringSearch
      * @returns {RegExp}
      */
@@ -43169,6 +39656,24 @@ class Address6 {
     }
 }
 exports.Address6 = Address6;
+const TYPE_SUBNETS = Object.keys(constants6.TYPES).map((subnet) => [
+    new Address6(subnet),
+    constants6.TYPES[subnet],
+]);
+const TEREDO_SUBNET = new Address6('2001::/32');
+const SIX_TO_FOUR_SUBNET = new Address6('2002::/16');
+const ULA_SUBNET = new Address6('fc00::/7');
+const LINK_LOCAL_SUBNET = new Address6('fe80::/10');
+const DOCUMENTATION_SUBNETS = [new Address6('2001:db8::/32'), new Address6('3fff::/20')];
+const BENCHMARKING_SUBNET = new Address6('2001:2::/48');
+const GLOBAL_UNICAST_SUBNET = new Address6('2000::/3');
+const SPECIAL_PURPOSE_V6 = constants6.SPECIAL_PURPOSE.map(([cidr, , reachable]) => ({
+    subnet: new Address6(cidr),
+    reachable,
+}));
+const IPV4_MAPPED_SUBNET = new Address6('::ffff:0:0/96');
+const NAT64_WELL_KNOWN_SUBNET = new Address6('64:ff9b::/96');
+const NAT64_LOCAL_USE_SUBNET = new Address6('64:ff9b:1::/48');
 //# sourceMappingURL=ipv6.js.map
 
 /***/ }),
@@ -43179,11 +39684,54 @@ exports.Address6 = Address6;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.RE_SUBNET_STRING = exports.RE_ADDRESS = exports.GROUPS = exports.BITS = void 0;
+exports.SPECIAL_PURPOSE = exports.RE_SUBNET_STRING = exports.RE_ADDRESS = exports.GROUPS = exports.BITS = void 0;
 exports.BITS = 32;
 exports.GROUPS = 4;
-exports.RE_ADDRESS = /^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/g;
+// Each octet is 0-255 written without a leading zero. A leading zero is
+// octal to the WHATWG URL parser, inet_aton, and getaddrinfo, but decimal to
+// parseInt(part, 10), so accepting the notation would make this library
+// disagree with the network stack about which host a string names.
+exports.RE_ADDRESS = /^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$/g;
 exports.RE_SUBNET_STRING = /\/\d{1,2}$/;
+/**
+ * The IANA IPv4 Special-Purpose Address Registry
+ * (https://www.iana.org/assignments/iana-ipv4-special-registry/), one entry
+ * per block: `[cidr, name, globallyReachable]`. A `null` reachability means
+ * the registry leaves the column blank and the block inherits the answer of
+ * the block containing it (or is global when nothing contains it).
+ *
+ * `Address4.isGlobal()` answers from the most specific entry containing the
+ * address. `test/data/iana-corpus.json` is generated from the registry's CSV
+ * and pins this table to it.
+ */
+exports.SPECIAL_PURPOSE = [
+    ['0.0.0.0/8', 'This network', false],
+    ['0.0.0.0/32', 'This host on this network', false],
+    ['10.0.0.0/8', 'Private-Use', false],
+    ['100.64.0.0/10', 'Shared Address Space', false],
+    ['127.0.0.0/8', 'Loopback', false],
+    ['169.254.0.0/16', 'Link Local', false],
+    ['172.16.0.0/12', 'Private-Use', false],
+    ['192.0.0.0/24', 'IETF Protocol Assignments', false],
+    ['192.0.0.0/29', 'IPv4 Service Continuity Prefix', false],
+    ['192.0.0.8/32', 'IPv4 dummy address', false],
+    ['192.0.0.9/32', 'Port Control Protocol Anycast', true],
+    ['192.0.0.10/32', 'Traversal Using Relays around NAT Anycast', true],
+    ['192.0.0.170/32', 'NAT64/DNS64 Discovery', false],
+    ['192.0.0.171/32', 'NAT64/DNS64 Discovery', false],
+    ['192.0.2.0/24', 'Documentation (TEST-NET-1)', false],
+    ['192.31.196.0/24', 'AS112-v4', true],
+    ['192.52.193.0/24', 'AMT', true],
+    ['192.88.99.0/24', 'Deprecated (6to4 Relay Anycast)', null],
+    ['192.88.99.2/32', '6a44-relay anycast address', false],
+    ['192.168.0.0/16', 'Private-Use', false],
+    ['192.175.48.0/24', 'Direct Delegation AS112 Service', true],
+    ['198.18.0.0/15', 'Benchmarking', false],
+    ['198.51.100.0/24', 'Documentation (TEST-NET-2)', false],
+    ['203.0.113.0/24', 'Documentation (TEST-NET-3)', false],
+    ['240.0.0.0/4', 'Reserved', false],
+    ['255.255.255.255/32', 'Limited Broadcast', false],
+];
 //# sourceMappingURL=constants.js.map
 
 /***/ }),
@@ -43194,7 +39742,7 @@ exports.RE_SUBNET_STRING = /\/\d{1,2}$/;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.RE_URL_WITH_PORT = exports.RE_URL = exports.RE_ZONE_STRING = exports.RE_SUBNET_STRING = exports.RE_BAD_ADDRESS = exports.RE_BAD_CHARACTERS = exports.TYPES = exports.SCOPES = exports.GROUPS = exports.BITS = void 0;
+exports.SPECIAL_PURPOSE = exports.RE_URL_WITH_PORT = exports.RE_URL = exports.RE_ZONE_STRING = exports.RE_SUBNET_STRING = exports.RE_BAD_ADDRESS = exports.RE_BAD_CHARACTERS = exports.TYPES = exports.SCOPES = exports.GROUPS = exports.BITS = void 0;
 exports.BITS = 128;
 exports.GROUPS = 8;
 /**
@@ -43238,8 +39786,20 @@ exports.TYPES = {
     'ff05::1:3/128': 'Multicast (All DHCP servers in this site)',
     '::/128': 'Unspecified',
     '::1/128': 'Loopback',
+    '::ffff:0:0/96': 'IPv4-mapped',
     'ff00::/8': 'Multicast',
     'fe80::/10': 'Link-local unicast',
+    'fc00::/7': 'Unique local',
+    '2001::/32': 'Teredo',
+    '2001:2::/48': 'Benchmarking',
+    '2002::/16': '6to4',
+    '2001:db8::/32': 'Documentation',
+    '3fff::/20': 'Documentation',
+    '100::/64': 'Discard-only',
+    'fec0::/10': 'Site-local unicast (deprecated)',
+    '::/96': 'IPv4-compatible (deprecated)',
+    '64:ff9b::/96': 'NAT64 (well-known)',
+    '64:ff9b:1::/48': 'NAT64 (local-use)',
 };
 /**
  * A regular expression that matches bad characters in an IPv6 address
@@ -43265,40 +39825,88 @@ exports.RE_SUBNET_STRING = /\/\d{1,3}(?=%|$)/;
  * @static
  */
 exports.RE_ZONE_STRING = /%.*$/;
-exports.RE_URL = new RegExp(/^\[{0,1}([0-9a-f:]+)\]{0,1}/);
-exports.RE_URL_WITH_PORT = new RegExp(/\[([0-9a-f:]+)\]:([0-9]{1,5})/);
+exports.RE_URL = /^(?:\[([0-9a-f:.]+)\]|([0-9a-f:.]+))(?:[/?#].*)?$/i;
+exports.RE_URL_WITH_PORT = /^\[([0-9a-f:.]+)\]:([0-9]{1,5})(?:[/?#].*)?$/i;
+/**
+ * The IANA IPv6 Special-Purpose Address Registry
+ * (https://www.iana.org/assignments/iana-ipv6-special-registry/), one entry
+ * per block: `[cidr, name, globallyReachable]`. A `null` reachability means
+ * the registry says N/A or leaves the column blank; N/A blocks (Teredo, 6to4)
+ * are treated as not globally reachable, since a packet to one needs a relay,
+ * and blank blocks inherit the answer of the block containing them.
+ *
+ * `Address6.isGlobal()` answers from the most specific entry containing the
+ * address, after delegating IPv4-mapped and NAT64 well-known addresses to the
+ * embedded IPv4 address. `test/data/iana-corpus.json` is generated from the
+ * registry's CSV and pins this table to it.
+ */
+exports.SPECIAL_PURPOSE = [
+    ['::1/128', 'Loopback Address', false],
+    ['::/128', 'Unspecified Address', false],
+    ['::ffff:0:0/96', 'IPv4-mapped Address', false],
+    ['64:ff9b::/96', 'IPv4-IPv6 Translat.', true],
+    ['64:ff9b:1::/48', 'IPv4-IPv6 Translat.', false],
+    ['100::/64', 'Discard-Only Address Block', false],
+    ['100:0:0:1::/64', 'Dummy IPv6 Prefix', false],
+    ['2001::/23', 'IETF Protocol Assignments', false],
+    ['2001::/32', 'TEREDO', false],
+    ['2001:1::1/128', 'Port Control Protocol Anycast', true],
+    ['2001:1::2/128', 'Traversal Using Relays around NAT Anycast', true],
+    ['2001:1::3/128', 'DNS-SD Service Registration Protocol Anycast', true],
+    ['2001:2::/48', 'Benchmarking', false],
+    ['2001:3::/32', 'AMT', true],
+    ['2001:4:112::/48', 'AS112-v6', true],
+    ['2001:10::/28', 'Deprecated (previously ORCHID)', null],
+    ['2001:20::/28', 'ORCHIDv2', true],
+    ['2001:30::/28', 'Drone Remote ID Protocol Entity Tags (DETs) Prefix', true],
+    ['2001:db8::/32', 'Documentation', false],
+    ['2002::/16', '6to4', false],
+    ['2620:4f:8000::/48', 'Direct Delegation AS112 Service', true],
+    ['3fff::/20', 'Documentation', false],
+    ['5f00::/16', 'Segment Routing (SRv6) SIDs', false],
+    ['fc00::/7', 'Unique-Local', false],
+    ['fe80::/10', 'Link-Local Unicast', false],
+];
 //# sourceMappingURL=constants.js.map
 
 /***/ }),
 
 /***/ 20339:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+/***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.simpleGroup = exports.spanLeadingZeroes = exports.spanAll = exports.spanAllZeroes = void 0;
-const sprintf_js_1 = __nccwpck_require__(19973);
+exports.escapeHtml = escapeHtml;
+exports.spanAllZeroes = spanAllZeroes;
+exports.spanAll = spanAll;
+exports.spanLeadingZeroes = spanLeadingZeroes;
+exports.simpleGroup = simpleGroup;
+function escapeHtml(s) {
+    return s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 /**
  * @returns {String} the string with all zeroes contained in a <span>
  */
 function spanAllZeroes(s) {
-    return s.replace(/(0+)/g, '<span class="zero">$1</span>');
+    return escapeHtml(s).replace(/(0+)/g, '<span class="zero">$1</span>');
 }
-exports.spanAllZeroes = spanAllZeroes;
 /**
  * @returns {String} the string with each character contained in a <span>
  */
 function spanAll(s, offset = 0) {
     const letters = s.split('');
     return letters
-        .map((n, i) => (0, sprintf_js_1.sprintf)('<span class="digit value-%s position-%d">%s</span>', n, i + offset, spanAllZeroes(n)) // XXX Use #base-2 .value-0 instead?
-    )
+        .map((n, i) => `<span class="digit value-${escapeHtml(n)} position-${i + offset}">${spanAllZeroes(n)}</span>`)
         .join('');
 }
-exports.spanAll = spanAll;
 function spanLeadingZeroesSimple(group) {
-    return group.replace(/^(0+)/, '<span class="zero">$1</span>');
+    return escapeHtml(group).replace(/^(0+)/, '<span class="zero">$1</span>');
 }
 /**
  * @returns {String} the string with leading zeroes contained in a <span>
@@ -43307,7 +39915,6 @@ function spanLeadingZeroes(address) {
     const groups = address.split(':');
     return groups.map((g) => spanLeadingZeroesSimple(g)).join(':');
 }
-exports.spanLeadingZeroes = spanLeadingZeroes;
 /**
  * Groups an address
  * @returns {String} a grouped address
@@ -43318,10 +39925,9 @@ function simpleGroup(addressString, offset = 0) {
         if (/group-v4/.test(g)) {
             return g;
         }
-        return (0, sprintf_js_1.sprintf)('<span class="hover-group group-%d">%s</span>', i + offset, spanLeadingZeroesSimple(g));
+        return `<span class="hover-group group-${i + offset}">${spanLeadingZeroesSimple(g)}</span>`;
     });
 }
-exports.simpleGroup = simpleGroup;
 //# sourceMappingURL=helpers.js.map
 
 /***/ }),
@@ -43355,20 +39961,21 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.possibleElisions = exports.simpleRegularExpression = exports.ADDRESS_BOUNDARY = exports.padGroup = exports.groupPossibilities = void 0;
-const v6 = __importStar(__nccwpck_require__(52899));
-const sprintf_js_1 = __nccwpck_require__(19973);
-function groupPossibilities(possibilities) {
-    return (0, sprintf_js_1.sprintf)('(%s)', possibilities.join('|'));
-}
+exports.ADDRESS_BOUNDARY = void 0;
 exports.groupPossibilities = groupPossibilities;
+exports.padGroup = padGroup;
+exports.simpleRegularExpression = simpleRegularExpression;
+exports.possibleElisions = possibleElisions;
+const v6 = __importStar(__nccwpck_require__(52899));
+function groupPossibilities(possibilities) {
+    return `(${possibilities.join('|')})`;
+}
 function padGroup(group) {
     if (group.length < 4) {
-        return (0, sprintf_js_1.sprintf)('0{0,%d}%s', 4 - group.length, group);
+        return `0{0,${4 - group.length}}${group}`;
     }
     return group;
 }
-exports.padGroup = padGroup;
 exports.ADDRESS_BOUNDARY = '[^A-Fa-f0-9:]';
 function simpleRegularExpression(groups) {
     const zeroIndexes = [];
@@ -43393,7 +40000,6 @@ function simpleRegularExpression(groups) {
     possibilities.push(groups.map(padGroup).join(':'));
     return groupPossibilities(possibilities);
 }
-exports.simpleRegularExpression = simpleRegularExpression;
 function possibleElisions(elidedGroups, moreLeft, moreRight) {
     const left = moreLeft ? '' : ':';
     const right = moreRight ? '' : ':';
@@ -43411,20 +40017,19 @@ function possibleElisions(elidedGroups, moreLeft, moreRight) {
         possibilities.push(':');
     }
     // 4. elision from the left side
-    possibilities.push((0, sprintf_js_1.sprintf)('%s(:0{1,4}){1,%d}', left, elidedGroups - 1));
+    possibilities.push(`${left}(:0{1,4}){1,${elidedGroups - 1}}`);
     // 5. elision from the right side
-    possibilities.push((0, sprintf_js_1.sprintf)('(0{1,4}:){1,%d}%s', elidedGroups - 1, right));
+    possibilities.push(`(0{1,4}:){1,${elidedGroups - 1}}${right}`);
     // 6. no elision
-    possibilities.push((0, sprintf_js_1.sprintf)('(0{1,4}:){%d}0{1,4}', elidedGroups - 1));
+    possibilities.push(`(0{1,4}:){${elidedGroups - 1}}0{1,4}`);
     // 7. elision (including sloppy elision) from the middle
     for (let groups = 1; groups < elidedGroups - 1; groups++) {
         for (let position = 1; position < elidedGroups - groups; position++) {
-            possibilities.push((0, sprintf_js_1.sprintf)('(0{1,4}:){%d}:(0{1,4}:){%d}0{1,4}', position, elidedGroups - position - groups - 1));
+            possibilities.push(`(0{1,4}:){${position}}:(0{1,4}:){${elidedGroups - position - groups - 1}}0{1,4}`);
         }
     }
     return groupPossibilities(possibilities);
 }
-exports.possibleElisions = possibleElisions;
 //# sourceMappingURL=regular-expressions.js.map
 
 /***/ }),
@@ -43541,51 +40146,48 @@ exports.matchToToken = function(match) {
 "use strict";
 
 
+const loader = __nccwpck_require__(91950)
+const dumper = __nccwpck_require__(59980)
 
-var loader = __nccwpck_require__(91950);
-var dumper = __nccwpck_require__(59980);
-
-
-function renamed(from, to) {
+function renamed (from, to) {
   return function () {
     throw new Error('Function yaml.' + from + ' is removed in js-yaml 4. ' +
-      'Use yaml.' + to + ' instead, which is now safe by default.');
-  };
+      'Use yaml.' + to + ' instead, which is now safe by default.')
+  }
 }
 
-
-module.exports.Type = __nccwpck_require__(9557);
-module.exports.Schema = __nccwpck_require__(62046);
-module.exports.FAILSAFE_SCHEMA = __nccwpck_require__(69832);
-module.exports.JSON_SCHEMA = __nccwpck_require__(58927);
-module.exports.CORE_SCHEMA = __nccwpck_require__(55746);
-module.exports.DEFAULT_SCHEMA = __nccwpck_require__(97336);
-module.exports.load                = loader.load;
-module.exports.loadAll             = loader.loadAll;
-module.exports.dump                = dumper.dump;
-module.exports.YAMLException = __nccwpck_require__(41248);
+module.exports.Type = __nccwpck_require__(9557)
+module.exports.Schema = __nccwpck_require__(62046)
+module.exports.FAILSAFE_SCHEMA = __nccwpck_require__(69832)
+module.exports.JSON_SCHEMA = __nccwpck_require__(58927)
+module.exports.CORE_SCHEMA = __nccwpck_require__(55746)
+module.exports.DEFAULT_SCHEMA = __nccwpck_require__(97336)
+module.exports.load = loader.load
+module.exports.loadAll = loader.loadAll
+module.exports.dump = dumper.dump
+module.exports.YAMLException = __nccwpck_require__(41248)
 
 // Re-export all types in case user wants to create custom schema
 module.exports.types = {
-  binary:    __nccwpck_require__(8149),
-  float:     __nccwpck_require__(57584),
-  map:       __nccwpck_require__(47316),
-  null:      __nccwpck_require__(4333),
-  pairs:     __nccwpck_require__(16267),
-  set:       __nccwpck_require__(78758),
+  binary: __nccwpck_require__(8149),
+  float: __nccwpck_require__(57584),
+  map: __nccwpck_require__(47316),
+  null: __nccwpck_require__(4333),
+  pairs: __nccwpck_require__(16267),
+  set: __nccwpck_require__(78758),
   timestamp: __nccwpck_require__(28966),
-  bool:      __nccwpck_require__(67296),
-  int:       __nccwpck_require__(62271),
-  merge:     __nccwpck_require__(76854),
-  omap:      __nccwpck_require__(58649),
-  seq:       __nccwpck_require__(77161),
-  str:       __nccwpck_require__(53929)
-};
+  bool: __nccwpck_require__(67296),
+  int: __nccwpck_require__(62271),
+  merge: __nccwpck_require__(76854),
+  omap: __nccwpck_require__(58649),
+  seq: __nccwpck_require__(77161),
+  str: __nccwpck_require__(53929)
+}
 
 // Removed functions from JS-YAML 3.0.x
-module.exports.safeLoad            = renamed('safeLoad', 'load');
-module.exports.safeLoadAll         = renamed('safeLoadAll', 'loadAll');
-module.exports.safeDump            = renamed('safeDump', 'dump');
+module.exports.safeLoad = renamed('safeLoad', 'load')
+module.exports.safeLoadAll = renamed('safeLoadAll', 'loadAll')
+module.exports.safeDump = renamed('safeDump', 'dump')
 
 
 /***/ }),
@@ -43596,63 +40198,54 @@ module.exports.safeDump            = renamed('safeDump', 'dump');
 "use strict";
 
 
-
-function isNothing(subject) {
-  return (typeof subject === 'undefined') || (subject === null);
+function isNothing (subject) {
+  return (typeof subject === 'undefined') || (subject === null)
 }
 
-
-function isObject(subject) {
-  return (typeof subject === 'object') && (subject !== null);
+function isObject (subject) {
+  return (typeof subject === 'object') && (subject !== null)
 }
 
+function toArray (sequence) {
+  if (Array.isArray(sequence)) return sequence
+  else if (isNothing(sequence)) return []
 
-function toArray(sequence) {
-  if (Array.isArray(sequence)) return sequence;
-  else if (isNothing(sequence)) return [];
-
-  return [ sequence ];
+  return [sequence]
 }
 
-
-function extend(target, source) {
-  var index, length, key, sourceKeys;
-
+function extend (target, source) {
   if (source) {
-    sourceKeys = Object.keys(source);
+    const sourceKeys = Object.keys(source)
 
-    for (index = 0, length = sourceKeys.length; index < length; index += 1) {
-      key = sourceKeys[index];
-      target[key] = source[key];
+    for (let index = 0, length = sourceKeys.length; index < length; index += 1) {
+      const key = sourceKeys[index]
+      target[key] = source[key]
     }
   }
 
-  return target;
+  return target
 }
 
+function repeat (string, count) {
+  let result = ''
 
-function repeat(string, count) {
-  var result = '', cycle;
-
-  for (cycle = 0; cycle < count; cycle += 1) {
-    result += string;
+  for (let cycle = 0; cycle < count; cycle += 1) {
+    result += string
   }
 
-  return result;
+  return result
 }
 
-
-function isNegativeZero(number) {
-  return (number === 0) && (Number.NEGATIVE_INFINITY === 1 / number);
+function isNegativeZero (number) {
+  return (number === 0) && (Number.NEGATIVE_INFINITY === 1 / number)
 }
 
-
-module.exports.isNothing      = isNothing;
-module.exports.isObject       = isObject;
-module.exports.toArray        = toArray;
-module.exports.repeat         = repeat;
-module.exports.isNegativeZero = isNegativeZero;
-module.exports.extend         = extend;
+module.exports.isNothing = isNothing
+module.exports.isObject = isObject
+module.exports.toArray = toArray
+module.exports.repeat = repeat
+module.exports.isNegativeZero = isNegativeZero
+module.exports.extend = extend
 
 
 /***/ }),
@@ -43663,203 +40256,196 @@ module.exports.extend         = extend;
 "use strict";
 
 
-/*eslint-disable no-use-before-define*/
+const common = __nccwpck_require__(19816)
+const YAMLException = __nccwpck_require__(41248)
+const DEFAULT_SCHEMA = __nccwpck_require__(97336)
 
-var common              = __nccwpck_require__(19816);
-var YAMLException       = __nccwpck_require__(41248);
-var DEFAULT_SCHEMA      = __nccwpck_require__(97336);
+const _toString = Object.prototype.toString
+const _hasOwnProperty = Object.prototype.hasOwnProperty
 
-var _toString       = Object.prototype.toString;
-var _hasOwnProperty = Object.prototype.hasOwnProperty;
+const CHAR_BOM = 0xFEFF
+const CHAR_TAB = 0x09 /* Tab */
+const CHAR_LINE_FEED = 0x0A /* LF */
+const CHAR_CARRIAGE_RETURN = 0x0D /* CR */
+const CHAR_SPACE = 0x20 /* Space */
+const CHAR_EXCLAMATION = 0x21 /* ! */
+const CHAR_DOUBLE_QUOTE = 0x22 /* " */
+const CHAR_SHARP = 0x23 /* # */
+const CHAR_PERCENT = 0x25 /* % */
+const CHAR_AMPERSAND = 0x26 /* & */
+const CHAR_SINGLE_QUOTE = 0x27 /* ' */
+const CHAR_ASTERISK = 0x2A /* * */
+const CHAR_COMMA = 0x2C /* , */
+const CHAR_MINUS = 0x2D /* - */
+const CHAR_COLON = 0x3A /* : */
+const CHAR_EQUALS = 0x3D /* = */
+const CHAR_GREATER_THAN = 0x3E /* > */
+const CHAR_QUESTION = 0x3F /* ? */
+const CHAR_COMMERCIAL_AT = 0x40 /* @ */
+const CHAR_LEFT_SQUARE_BRACKET = 0x5B /* [ */
+const CHAR_RIGHT_SQUARE_BRACKET = 0x5D /* ] */
+const CHAR_GRAVE_ACCENT = 0x60 /* ` */
+const CHAR_LEFT_CURLY_BRACKET = 0x7B /* { */
+const CHAR_VERTICAL_LINE = 0x7C /* | */
+const CHAR_RIGHT_CURLY_BRACKET = 0x7D /* } */
 
-var CHAR_BOM                  = 0xFEFF;
-var CHAR_TAB                  = 0x09; /* Tab */
-var CHAR_LINE_FEED            = 0x0A; /* LF */
-var CHAR_CARRIAGE_RETURN      = 0x0D; /* CR */
-var CHAR_SPACE                = 0x20; /* Space */
-var CHAR_EXCLAMATION          = 0x21; /* ! */
-var CHAR_DOUBLE_QUOTE         = 0x22; /* " */
-var CHAR_SHARP                = 0x23; /* # */
-var CHAR_PERCENT              = 0x25; /* % */
-var CHAR_AMPERSAND            = 0x26; /* & */
-var CHAR_SINGLE_QUOTE         = 0x27; /* ' */
-var CHAR_ASTERISK             = 0x2A; /* * */
-var CHAR_COMMA                = 0x2C; /* , */
-var CHAR_MINUS                = 0x2D; /* - */
-var CHAR_COLON                = 0x3A; /* : */
-var CHAR_EQUALS               = 0x3D; /* = */
-var CHAR_GREATER_THAN         = 0x3E; /* > */
-var CHAR_QUESTION             = 0x3F; /* ? */
-var CHAR_COMMERCIAL_AT        = 0x40; /* @ */
-var CHAR_LEFT_SQUARE_BRACKET  = 0x5B; /* [ */
-var CHAR_RIGHT_SQUARE_BRACKET = 0x5D; /* ] */
-var CHAR_GRAVE_ACCENT         = 0x60; /* ` */
-var CHAR_LEFT_CURLY_BRACKET   = 0x7B; /* { */
-var CHAR_VERTICAL_LINE        = 0x7C; /* | */
-var CHAR_RIGHT_CURLY_BRACKET  = 0x7D; /* } */
+const ESCAPE_SEQUENCES = {}
 
-var ESCAPE_SEQUENCES = {};
+ESCAPE_SEQUENCES[0x00] = '\\0'
+ESCAPE_SEQUENCES[0x07] = '\\a'
+ESCAPE_SEQUENCES[0x08] = '\\b'
+ESCAPE_SEQUENCES[0x09] = '\\t'
+ESCAPE_SEQUENCES[0x0A] = '\\n'
+ESCAPE_SEQUENCES[0x0B] = '\\v'
+ESCAPE_SEQUENCES[0x0C] = '\\f'
+ESCAPE_SEQUENCES[0x0D] = '\\r'
+ESCAPE_SEQUENCES[0x1B] = '\\e'
+ESCAPE_SEQUENCES[0x22] = '\\"'
+ESCAPE_SEQUENCES[0x5C] = '\\\\'
+ESCAPE_SEQUENCES[0x85] = '\\N'
+ESCAPE_SEQUENCES[0xA0] = '\\_'
+ESCAPE_SEQUENCES[0x2028] = '\\L'
+ESCAPE_SEQUENCES[0x2029] = '\\P'
 
-ESCAPE_SEQUENCES[0x00]   = '\\0';
-ESCAPE_SEQUENCES[0x07]   = '\\a';
-ESCAPE_SEQUENCES[0x08]   = '\\b';
-ESCAPE_SEQUENCES[0x09]   = '\\t';
-ESCAPE_SEQUENCES[0x0A]   = '\\n';
-ESCAPE_SEQUENCES[0x0B]   = '\\v';
-ESCAPE_SEQUENCES[0x0C]   = '\\f';
-ESCAPE_SEQUENCES[0x0D]   = '\\r';
-ESCAPE_SEQUENCES[0x1B]   = '\\e';
-ESCAPE_SEQUENCES[0x22]   = '\\"';
-ESCAPE_SEQUENCES[0x5C]   = '\\\\';
-ESCAPE_SEQUENCES[0x85]   = '\\N';
-ESCAPE_SEQUENCES[0xA0]   = '\\_';
-ESCAPE_SEQUENCES[0x2028] = '\\L';
-ESCAPE_SEQUENCES[0x2029] = '\\P';
-
-var DEPRECATED_BOOLEANS_SYNTAX = [
+const DEPRECATED_BOOLEANS_SYNTAX = [
   'y', 'Y', 'yes', 'Yes', 'YES', 'on', 'On', 'ON',
   'n', 'N', 'no', 'No', 'NO', 'off', 'Off', 'OFF'
-];
+]
 
-var DEPRECATED_BASE60_SYNTAX = /^[-+]?[0-9_]+(?::[0-9_]+)+(?:\.[0-9_]*)?$/;
+const DEPRECATED_BASE60_SYNTAX = /^[-+]?[0-9_]+(?::[0-9_]+)+(?:\.[0-9_]*)?$/
 
-function compileStyleMap(schema, map) {
-  var result, keys, index, length, tag, style, type;
+function compileStyleMap (schema, map) {
+  if (map === null) return {}
 
-  if (map === null) return {};
+  const result = {}
+  const keys = Object.keys(map)
 
-  result = {};
-  keys = Object.keys(map);
-
-  for (index = 0, length = keys.length; index < length; index += 1) {
-    tag = keys[index];
-    style = String(map[tag]);
+  for (let index = 0, length = keys.length; index < length; index += 1) {
+    let tag = keys[index]
+    let style = String(map[tag])
 
     if (tag.slice(0, 2) === '!!') {
-      tag = 'tag:yaml.org,2002:' + tag.slice(2);
+      tag = 'tag:yaml.org,2002:' + tag.slice(2)
     }
-    type = schema.compiledTypeMap['fallback'][tag];
+    const type = schema.compiledTypeMap['fallback'][tag]
 
     if (type && _hasOwnProperty.call(type.styleAliases, style)) {
-      style = type.styleAliases[style];
+      style = type.styleAliases[style]
     }
 
-    result[tag] = style;
+    result[tag] = style
   }
 
-  return result;
+  return result
 }
 
-function encodeHex(character) {
-  var string, handle, length;
+function encodeHex (character) {
+  let handle
+  let length
 
-  string = character.toString(16).toUpperCase();
+  const string = character.toString(16).toUpperCase()
 
   if (character <= 0xFF) {
-    handle = 'x';
-    length = 2;
+    handle = 'x'
+    length = 2
   } else if (character <= 0xFFFF) {
-    handle = 'u';
-    length = 4;
+    handle = 'u'
+    length = 4
   } else if (character <= 0xFFFFFFFF) {
-    handle = 'U';
-    length = 8;
+    handle = 'U'
+    length = 8
   } else {
-    throw new YAMLException('code point within a string may not be greater than 0xFFFFFFFF');
+    throw new YAMLException('code point within a string may not be greater than 0xFFFFFFFF')
   }
 
-  return '\\' + handle + common.repeat('0', length - string.length) + string;
+  return '\\' + handle + common.repeat('0', length - string.length) + string
 }
 
+const QUOTING_TYPE_SINGLE = 1
+const QUOTING_TYPE_DOUBLE = 2
 
-var QUOTING_TYPE_SINGLE = 1,
-    QUOTING_TYPE_DOUBLE = 2;
+function State (options) {
+  this.schema = options['schema'] || DEFAULT_SCHEMA
+  this.indent = Math.max(1, (options['indent'] || 2))
+  this.noArrayIndent = options['noArrayIndent'] || false
+  this.skipInvalid = options['skipInvalid'] || false
+  this.flowLevel = (common.isNothing(options['flowLevel']) ? -1 : options['flowLevel'])
+  this.styleMap = compileStyleMap(this.schema, options['styles'] || null)
+  this.sortKeys = options['sortKeys'] || false
+  this.lineWidth = options['lineWidth'] || 80
+  this.noRefs = options['noRefs'] || false
+  this.noCompatMode = options['noCompatMode'] || false
+  this.condenseFlow = options['condenseFlow'] || false
+  this.quotingType = options['quotingType'] === '"' ? QUOTING_TYPE_DOUBLE : QUOTING_TYPE_SINGLE
+  this.forceQuotes = options['forceQuotes'] || false
+  this.replacer = typeof options['replacer'] === 'function' ? options['replacer'] : null
 
-function State(options) {
-  this.schema        = options['schema'] || DEFAULT_SCHEMA;
-  this.indent        = Math.max(1, (options['indent'] || 2));
-  this.noArrayIndent = options['noArrayIndent'] || false;
-  this.skipInvalid   = options['skipInvalid'] || false;
-  this.flowLevel     = (common.isNothing(options['flowLevel']) ? -1 : options['flowLevel']);
-  this.styleMap      = compileStyleMap(this.schema, options['styles'] || null);
-  this.sortKeys      = options['sortKeys'] || false;
-  this.lineWidth     = options['lineWidth'] || 80;
-  this.noRefs        = options['noRefs'] || false;
-  this.noCompatMode  = options['noCompatMode'] || false;
-  this.condenseFlow  = options['condenseFlow'] || false;
-  this.quotingType   = options['quotingType'] === '"' ? QUOTING_TYPE_DOUBLE : QUOTING_TYPE_SINGLE;
-  this.forceQuotes   = options['forceQuotes'] || false;
-  this.replacer      = typeof options['replacer'] === 'function' ? options['replacer'] : null;
+  this.implicitTypes = this.schema.compiledImplicit
+  this.explicitTypes = this.schema.compiledExplicit
 
-  this.implicitTypes = this.schema.compiledImplicit;
-  this.explicitTypes = this.schema.compiledExplicit;
+  this.tag = null
+  this.result = ''
 
-  this.tag = null;
-  this.result = '';
-
-  this.duplicates = [];
-  this.usedDuplicates = null;
+  this.duplicates = []
+  this.usedDuplicates = null
 }
 
 // Indents every line in a string. Empty lines (\n only) are not indented.
-function indentString(string, spaces) {
-  var ind = common.repeat(' ', spaces),
-      position = 0,
-      next = -1,
-      result = '',
-      line,
-      length = string.length;
+function indentString (string, spaces) {
+  const ind = common.repeat(' ', spaces)
+  let position = 0
+  let result = ''
+  const length = string.length
 
   while (position < length) {
-    next = string.indexOf('\n', position);
+    let line
+    const next = string.indexOf('\n', position)
     if (next === -1) {
-      line = string.slice(position);
-      position = length;
+      line = string.slice(position)
+      position = length
     } else {
-      line = string.slice(position, next + 1);
-      position = next + 1;
+      line = string.slice(position, next + 1)
+      position = next + 1
     }
 
-    if (line.length && line !== '\n') result += ind;
+    if (line.length && line !== '\n') result += ind
 
-    result += line;
+    result += line
   }
 
-  return result;
+  return result
 }
 
-function generateNextLine(state, level) {
-  return '\n' + common.repeat(' ', state.indent * level);
+function generateNextLine (state, level) {
+  return '\n' + common.repeat(' ', state.indent * level)
 }
 
-function testImplicitResolving(state, str) {
-  var index, length, type;
-
-  for (index = 0, length = state.implicitTypes.length; index < length; index += 1) {
-    type = state.implicitTypes[index];
+function testImplicitResolving (state, str) {
+  for (let index = 0, length = state.implicitTypes.length; index < length; index += 1) {
+    const type = state.implicitTypes[index]
 
     if (type.resolve(str)) {
-      return true;
+      return true
     }
   }
 
-  return false;
+  return false
 }
 
 // [33] s-white ::= s-space | s-tab
-function isWhitespace(c) {
-  return c === CHAR_SPACE || c === CHAR_TAB;
+function isWhitespace (c) {
+  return c === CHAR_SPACE || c === CHAR_TAB
 }
 
 // Returns true if the character can be printed without escaping.
 // From YAML 1.2: "any allowed characters known to be non-printable
 // should also be escaped. [However,] This isn’t mandatory"
 // Derived from nb-char - \t - #x85 - #xA0 - #x2028 - #x2029.
-function isPrintable(c) {
-  return  (0x00020 <= c && c <= 0x00007E)
-      || ((0x000A1 <= c && c <= 0x00D7FF) && c !== 0x2028 && c !== 0x2029)
-      || ((0x0E000 <= c && c <= 0x00FFFD) && c !== CHAR_BOM)
-      ||  (0x10000 <= c && c <= 0x10FFFF);
+function isPrintable (c) {
+  return (c >= 0x00020 && c <= 0x00007E) ||
+    ((c >= 0x000A1 && c <= 0x00D7FF) && c !== 0x2028 && c !== 0x2029) ||
+    ((c >= 0x0E000 && c <= 0x00FFFD) && c !== CHAR_BOM) ||
+    (c >= 0x10000 && c <= 0x10FFFF)
 }
 
 // [34] ns-char ::= nb-char - s-white
@@ -43867,12 +40453,12 @@ function isPrintable(c) {
 // [26] b-char  ::= b-line-feed | b-carriage-return
 // Including s-white (for some reason, examples doesn't match specs in this aspect)
 // ns-char ::= c-printable - b-line-feed - b-carriage-return - c-byte-order-mark
-function isNsCharOrWhitespace(c) {
-  return isPrintable(c)
-    && c !== CHAR_BOM
+function isNsCharOrWhitespace (c) {
+  return isPrintable(c) &&
+    c !== CHAR_BOM &&
     // - b-char
-    && c !== CHAR_CARRIAGE_RETURN
-    && c !== CHAR_LINE_FEED;
+    c !== CHAR_CARRIAGE_RETURN &&
+    c !== CHAR_LINE_FEED
 }
 
 // [127]  ns-plain-safe(c) ::= c = flow-out  ⇒ ns-plain-safe-out
@@ -43884,91 +40470,96 @@ function isNsCharOrWhitespace(c) {
 // [130]  ns-plain-char(c) ::=  ( ns-plain-safe(c) - “:” - “#” )
 //                            | ( /* An ns-char preceding */ “#” )
 //                            | ( “:” /* Followed by an ns-plain-safe(c) */ )
-function isPlainSafe(c, prev, inblock) {
-  var cIsNsCharOrWhitespace = isNsCharOrWhitespace(c);
-  var cIsNsChar = cIsNsCharOrWhitespace && !isWhitespace(c);
+function isPlainSafe (c, prev, inblock) {
+  const cIsNsCharOrWhitespace = isNsCharOrWhitespace(c)
+  const cIsNsChar = cIsNsCharOrWhitespace && !isWhitespace(c)
   return (
-    // ns-plain-safe
-    inblock ? // c = flow-in
-      cIsNsCharOrWhitespace
-      : cIsNsCharOrWhitespace
-        // - c-flow-indicator
-        && c !== CHAR_COMMA
-        && c !== CHAR_LEFT_SQUARE_BRACKET
-        && c !== CHAR_RIGHT_SQUARE_BRACKET
-        && c !== CHAR_LEFT_CURLY_BRACKET
-        && c !== CHAR_RIGHT_CURLY_BRACKET
-  )
+    (
+      // ns-plain-safe
+      inblock // c = flow-in
+        ? cIsNsCharOrWhitespace
+        : cIsNsCharOrWhitespace &&
+          // - c-flow-indicator
+          c !== CHAR_COMMA &&
+          c !== CHAR_LEFT_SQUARE_BRACKET &&
+          c !== CHAR_RIGHT_SQUARE_BRACKET &&
+          c !== CHAR_LEFT_CURLY_BRACKET &&
+          c !== CHAR_RIGHT_CURLY_BRACKET
+    ) &&
     // ns-plain-char
-    && c !== CHAR_SHARP // false on '#'
-    && !(prev === CHAR_COLON && !cIsNsChar) // false on ': '
-    || (isNsCharOrWhitespace(prev) && !isWhitespace(prev) && c === CHAR_SHARP) // change to true on '[^ ]#'
-    || (prev === CHAR_COLON && cIsNsChar); // change to true on ':[^ ]'
+    c !== CHAR_SHARP && // false on '#'
+    !(prev === CHAR_COLON && !cIsNsChar)
+  ) || // false on ': '
+  (isNsCharOrWhitespace(prev) && !isWhitespace(prev) && c === CHAR_SHARP) || // change to true on '[^ ]#'
+  (prev === CHAR_COLON && cIsNsChar) // change to true on ':[^ ]'
 }
 
 // Simplified test for values allowed as the first character in plain style.
-function isPlainSafeFirst(c) {
+function isPlainSafeFirst (c) {
   // Uses a subset of ns-char - c-indicator
   // where ns-char = nb-char - s-white.
   // No support of ( ( “?” | “:” | “-” ) /* Followed by an ns-plain-safe(c)) */ ) part
-  return isPrintable(c) && c !== CHAR_BOM
-    && !isWhitespace(c) // - s-white
+  return isPrintable(c) &&
+    c !== CHAR_BOM &&
+    !isWhitespace(c) && // - s-white
     // - (c-indicator ::=
     // “-” | “?” | “:” | “,” | “[” | “]” | “{” | “}”
-    && c !== CHAR_MINUS
-    && c !== CHAR_QUESTION
-    && c !== CHAR_COLON
-    && c !== CHAR_COMMA
-    && c !== CHAR_LEFT_SQUARE_BRACKET
-    && c !== CHAR_RIGHT_SQUARE_BRACKET
-    && c !== CHAR_LEFT_CURLY_BRACKET
-    && c !== CHAR_RIGHT_CURLY_BRACKET
+    c !== CHAR_MINUS &&
+    c !== CHAR_QUESTION &&
+    c !== CHAR_COLON &&
+    c !== CHAR_COMMA &&
+    c !== CHAR_LEFT_SQUARE_BRACKET &&
+    c !== CHAR_RIGHT_SQUARE_BRACKET &&
+    c !== CHAR_LEFT_CURLY_BRACKET &&
+    c !== CHAR_RIGHT_CURLY_BRACKET &&
     // | “#” | “&” | “*” | “!” | “|” | “=” | “>” | “'” | “"”
-    && c !== CHAR_SHARP
-    && c !== CHAR_AMPERSAND
-    && c !== CHAR_ASTERISK
-    && c !== CHAR_EXCLAMATION
-    && c !== CHAR_VERTICAL_LINE
-    && c !== CHAR_EQUALS
-    && c !== CHAR_GREATER_THAN
-    && c !== CHAR_SINGLE_QUOTE
-    && c !== CHAR_DOUBLE_QUOTE
+    c !== CHAR_SHARP &&
+    c !== CHAR_AMPERSAND &&
+    c !== CHAR_ASTERISK &&
+    c !== CHAR_EXCLAMATION &&
+    c !== CHAR_VERTICAL_LINE &&
+    c !== CHAR_EQUALS &&
+    c !== CHAR_GREATER_THAN &&
+    c !== CHAR_SINGLE_QUOTE &&
+    c !== CHAR_DOUBLE_QUOTE &&
     // | “%” | “@” | “`”)
-    && c !== CHAR_PERCENT
-    && c !== CHAR_COMMERCIAL_AT
-    && c !== CHAR_GRAVE_ACCENT;
+    c !== CHAR_PERCENT &&
+    c !== CHAR_COMMERCIAL_AT &&
+    c !== CHAR_GRAVE_ACCENT
 }
 
 // Simplified test for values allowed as the last character in plain style.
-function isPlainSafeLast(c) {
+function isPlainSafeLast (c) {
   // just not whitespace or colon, it will be checked to be plain character later
-  return !isWhitespace(c) && c !== CHAR_COLON;
+  return !isWhitespace(c) && c !== CHAR_COLON
 }
 
 // Same as 'string'.codePointAt(pos), but works in older browsers.
-function codePointAt(string, pos) {
-  var first = string.charCodeAt(pos), second;
+function codePointAt (string, pos) {
+  const first = string.charCodeAt(pos)
+  let second
+
   if (first >= 0xD800 && first <= 0xDBFF && pos + 1 < string.length) {
-    second = string.charCodeAt(pos + 1);
+    second = string.charCodeAt(pos + 1)
     if (second >= 0xDC00 && second <= 0xDFFF) {
       // https://mathiasbynens.be/notes/javascript-encoding#surrogate-formulae
-      return (first - 0xD800) * 0x400 + second - 0xDC00 + 0x10000;
+      return (first - 0xD800) * 0x400 + second - 0xDC00 + 0x10000
     }
   }
-  return first;
+  return first
 }
 
 // Determines whether block indentation indicator is required.
-function needIndentIndicator(string) {
-  var leadingSpaceRe = /^\n* /;
-  return leadingSpaceRe.test(string);
+function needIndentIndicator (string) {
+  const leadingSpaceRe = /^\n* /
+  return leadingSpaceRe.test(string)
 }
 
-var STYLE_PLAIN   = 1,
-    STYLE_SINGLE  = 2,
-    STYLE_LITERAL = 3,
-    STYLE_FOLDED  = 4,
-    STYLE_DOUBLE  = 5;
+const STYLE_PLAIN = 1
+const STYLE_SINGLE = 2
+const STYLE_LITERAL = 3
+const STYLE_FOLDED = 4
+const STYLE_DOUBLE = 5
 
 // Determines which scalar styles are possible and returns the preferred style.
 // lineWidth = -1 => no limit.
@@ -43977,54 +40568,53 @@ var STYLE_PLAIN   = 1,
 //    STYLE_PLAIN or STYLE_SINGLE => no \n are in the string.
 //    STYLE_LITERAL => no lines are suitable for folding (or lineWidth is -1).
 //    STYLE_FOLDED => a line > lineWidth and can be folded (and lineWidth != -1).
-function chooseScalarStyle(string, singleLineOnly, indentPerLevel, lineWidth,
+function chooseScalarStyle (string, singleLineOnly, indentPerLevel, lineWidth,
   testAmbiguousType, quotingType, forceQuotes, inblock) {
-
-  var i;
-  var char = 0;
-  var prevChar = null;
-  var hasLineBreak = false;
-  var hasFoldableLine = false; // only checked if shouldTrackWidth
-  var shouldTrackWidth = lineWidth !== -1;
-  var previousLineBreak = -1; // count the first line correctly
-  var plain = isPlainSafeFirst(codePointAt(string, 0))
-          && isPlainSafeLast(codePointAt(string, string.length - 1));
+  let i
+  let char = 0
+  let prevChar = null
+  let hasLineBreak = false
+  let hasFoldableLine = false // only checked if shouldTrackWidth
+  const shouldTrackWidth = lineWidth !== -1
+  let previousLineBreak = -1 // count the first line correctly
+  let plain = isPlainSafeFirst(codePointAt(string, 0)) &&
+    isPlainSafeLast(codePointAt(string, string.length - 1))
 
   if (singleLineOnly || forceQuotes) {
     // Case: no block styles.
     // Check for disallowed characters to rule out plain and single.
     for (i = 0; i < string.length; char >= 0x10000 ? i += 2 : i++) {
-      char = codePointAt(string, i);
+      char = codePointAt(string, i)
       if (!isPrintable(char)) {
-        return STYLE_DOUBLE;
+        return STYLE_DOUBLE
       }
-      plain = plain && isPlainSafe(char, prevChar, inblock);
-      prevChar = char;
+      plain = plain && isPlainSafe(char, prevChar, inblock)
+      prevChar = char
     }
   } else {
     // Case: block styles permitted.
     for (i = 0; i < string.length; char >= 0x10000 ? i += 2 : i++) {
-      char = codePointAt(string, i);
+      char = codePointAt(string, i)
       if (char === CHAR_LINE_FEED) {
-        hasLineBreak = true;
+        hasLineBreak = true
         // Check if any line can be folded.
         if (shouldTrackWidth) {
           hasFoldableLine = hasFoldableLine ||
             // Foldable line = too long, and not more-indented.
             (i - previousLineBreak - 1 > lineWidth &&
-             string[previousLineBreak + 1] !== ' ');
-          previousLineBreak = i;
+             string[previousLineBreak + 1] !== ' ')
+          previousLineBreak = i
         }
       } else if (!isPrintable(char)) {
-        return STYLE_DOUBLE;
+        return STYLE_DOUBLE
       }
-      plain = plain && isPlainSafe(char, prevChar, inblock);
-      prevChar = char;
+      plain = plain && isPlainSafe(char, prevChar, inblock)
+      prevChar = char
     }
     // in case the end is missing a \n
     hasFoldableLine = hasFoldableLine || (shouldTrackWidth &&
       (i - previousLineBreak - 1 > lineWidth &&
-       string[previousLineBreak + 1] !== ' '));
+       string[previousLineBreak + 1] !== ' '))
   }
   // Although every style can represent \n without escaping, prefer block styles
   // for multiline, since they're more readable and they don't add empty lines.
@@ -44033,20 +40623,20 @@ function chooseScalarStyle(string, singleLineOnly, indentPerLevel, lineWidth,
     // Strings interpretable as another type have to be quoted;
     // e.g. the string 'true' vs. the boolean true.
     if (plain && !forceQuotes && !testAmbiguousType(string)) {
-      return STYLE_PLAIN;
+      return STYLE_PLAIN
     }
-    return quotingType === QUOTING_TYPE_DOUBLE ? STYLE_DOUBLE : STYLE_SINGLE;
+    return quotingType === QUOTING_TYPE_DOUBLE ? STYLE_DOUBLE : STYLE_SINGLE
   }
   // Edge case: block indentation indicator can only have one digit.
   if (indentPerLevel > 9 && needIndentIndicator(string)) {
-    return STYLE_DOUBLE;
+    return STYLE_DOUBLE
   }
   // At this point we know block styles are valid.
   // Prefer literal style unless we want to fold.
   if (!forceQuotes) {
-    return hasFoldableLine ? STYLE_FOLDED : STYLE_LITERAL;
+    return hasFoldableLine ? STYLE_FOLDED : STYLE_LITERAL
   }
-  return quotingType === QUOTING_TYPE_DOUBLE ? STYLE_DOUBLE : STYLE_SINGLE;
+  return quotingType === QUOTING_TYPE_DOUBLE ? STYLE_DOUBLE : STYLE_SINGLE
 }
 
 // Note: line breaking/folding is implemented for only the folded style.
@@ -44055,18 +40645,18 @@ function chooseScalarStyle(string, singleLineOnly, indentPerLevel, lineWidth,
 //    • No ending newline => unaffected; already using strip "-" chomping.
 //    • Ending newline    => removed then restored.
 //  Importantly, this keeps the "+" chomp indicator from gaining an extra line.
-function writeScalar(state, string, level, iskey, inblock) {
+function writeScalar (state, string, level, iskey, inblock) {
   state.dump = (function () {
     if (string.length === 0) {
-      return state.quotingType === QUOTING_TYPE_DOUBLE ? '""' : "''";
+      return state.quotingType === QUOTING_TYPE_DOUBLE ? '""' : "''"
     }
     if (!state.noCompatMode) {
       if (DEPRECATED_BOOLEANS_SYNTAX.indexOf(string) !== -1 || DEPRECATED_BASE60_SYNTAX.test(string)) {
-        return state.quotingType === QUOTING_TYPE_DOUBLE ? ('"' + string + '"') : ("'" + string + "'");
+        return state.quotingType === QUOTING_TYPE_DOUBLE ? ('"' + string + '"') : ("'" + string + "'")
       }
     }
 
-    var indent = state.indent * Math.max(1, level); // no 0-indent scalars
+    const indent = state.indent * Math.max(1, level) // no 0-indent scalars
     // As indentation gets deeper, let the width decrease monotonically
     // to the lower bound min(state.lineWidth, 40).
     // Note that this implies
@@ -44074,461 +40664,441 @@ function writeScalar(state, string, level, iskey, inblock) {
     //  state.lineWidth > 40 + state.indent: width decreases until the lower bound.
     // This behaves better than a constant minimum width which disallows narrower options,
     // or an indent threshold which causes the width to suddenly increase.
-    var lineWidth = state.lineWidth === -1
-      ? -1 : Math.max(Math.min(state.lineWidth, 40), state.lineWidth - indent);
+    const lineWidth = (state.lineWidth === -1)
+      ? -1
+      : Math.max(Math.min(state.lineWidth, 40), state.lineWidth - indent)
 
     // Without knowing if keys are implicit/explicit, assume implicit for safety.
-    var singleLineOnly = iskey
+    const singleLineOnly = iskey ||
       // No block styles in flow mode.
-      || (state.flowLevel > -1 && level >= state.flowLevel);
-    function testAmbiguity(string) {
-      return testImplicitResolving(state, string);
+      (state.flowLevel > -1 && level >= state.flowLevel)
+    function testAmbiguity (string) {
+      return testImplicitResolving(state, string)
     }
 
     switch (chooseScalarStyle(string, singleLineOnly, state.indent, lineWidth,
       testAmbiguity, state.quotingType, state.forceQuotes && !iskey, inblock)) {
-
       case STYLE_PLAIN:
-        return string;
+        return string
       case STYLE_SINGLE:
-        return "'" + string.replace(/'/g, "''") + "'";
+        return "'" + string.replace(/'/g, "''") + "'"
       case STYLE_LITERAL:
-        return '|' + blockHeader(string, state.indent)
-          + dropEndingNewline(indentString(string, indent));
+        return '|' + blockHeader(string, state.indent) +
+          dropEndingNewline(indentString(string, indent))
       case STYLE_FOLDED:
-        return '>' + blockHeader(string, state.indent)
-          + dropEndingNewline(indentString(foldString(string, lineWidth), indent));
+        return '>' + blockHeader(string, state.indent) +
+          dropEndingNewline(indentString(foldString(string, lineWidth), indent))
       case STYLE_DOUBLE:
-        return '"' + escapeString(string, lineWidth) + '"';
+        return '"' + escapeString(string, lineWidth) + '"'
       default:
-        throw new YAMLException('impossible error: invalid scalar style');
+        throw new YAMLException('impossible error: invalid scalar style')
     }
-  }());
+  }())
 }
 
 // Pre-conditions: string is valid for a block scalar, 1 <= indentPerLevel <= 9.
-function blockHeader(string, indentPerLevel) {
-  var indentIndicator = needIndentIndicator(string) ? String(indentPerLevel) : '';
+function blockHeader (string, indentPerLevel) {
+  const indentIndicator = needIndentIndicator(string) ? String(indentPerLevel) : ''
 
   // note the special case: the string '\n' counts as a "trailing" empty line.
-  var clip =          string[string.length - 1] === '\n';
-  var keep = clip && (string[string.length - 2] === '\n' || string === '\n');
-  var chomp = keep ? '+' : (clip ? '' : '-');
+  const clip = string[string.length - 1] === '\n'
+  const keep = clip && (string[string.length - 2] === '\n' || string === '\n')
+  const chomp = keep ? '+' : (clip ? '' : '-')
 
-  return indentIndicator + chomp + '\n';
+  return indentIndicator + chomp + '\n'
 }
 
 // (See the note for writeScalar.)
-function dropEndingNewline(string) {
-  return string[string.length - 1] === '\n' ? string.slice(0, -1) : string;
+function dropEndingNewline (string) {
+  return string[string.length - 1] === '\n' ? string.slice(0, -1) : string
 }
 
 // Note: a long line without a suitable break point will exceed the width limit.
 // Pre-conditions: every char in str isPrintable, str.length > 0, width > 0.
-function foldString(string, width) {
+function foldString (string, width) {
   // In folded style, $k$ consecutive newlines output as $k+1$ newlines—
   // unless they're before or after a more-indented line, or at the very
   // beginning or end, in which case $k$ maps to $k$.
   // Therefore, parse each chunk as newline(s) followed by a content line.
-  var lineRe = /(\n+)([^\n]*)/g;
+  const lineRe = /(\n+)([^\n]*)/g
 
   // first line (possibly an empty line)
-  var result = (function () {
-    var nextLF = string.indexOf('\n');
-    nextLF = nextLF !== -1 ? nextLF : string.length;
-    lineRe.lastIndex = nextLF;
-    return foldLine(string.slice(0, nextLF), width);
-  }());
+  let result = (function () {
+    let nextLF = string.indexOf('\n')
+    nextLF = nextLF !== -1 ? nextLF : string.length
+    lineRe.lastIndex = nextLF
+    return foldLine(string.slice(0, nextLF), width)
+  }())
   // If we haven't reached the first content line yet, don't add an extra \n.
-  var prevMoreIndented = string[0] === '\n' || string[0] === ' ';
-  var moreIndented;
+  let prevMoreIndented = string[0] === '\n' || string[0] === ' '
+  let moreIndented
 
   // rest of the lines
-  var match;
+  let match
   while ((match = lineRe.exec(string))) {
-    var prefix = match[1], line = match[2];
-    moreIndented = (line[0] === ' ');
-    result += prefix
-      + (!prevMoreIndented && !moreIndented && line !== ''
-        ? '\n' : '')
-      + foldLine(line, width);
-    prevMoreIndented = moreIndented;
+    const prefix = match[1]
+    const line = match[2]
+
+    moreIndented = (line[0] === ' ')
+    result += prefix +
+      ((!prevMoreIndented && !moreIndented && line !== '') ? '\n' : '') +
+      foldLine(line, width)
+    prevMoreIndented = moreIndented
   }
 
-  return result;
+  return result
 }
 
 // Greedy line breaking.
 // Picks the longest line under the limit each time,
 // otherwise settles for the shortest line over the limit.
 // NB. More-indented lines *cannot* be folded, as that would add an extra \n.
-function foldLine(line, width) {
-  if (line === '' || line[0] === ' ') return line;
+function foldLine (line, width) {
+  if (line === '' || line[0] === ' ') return line
 
   // Since a more-indented line adds a \n, breaks can't be followed by a space.
-  var breakRe = / [^ ]/g; // note: the match index will always be <= length-2.
-  var match;
+  const breakRe = / [^ ]/g // note: the match index will always be <= length-2.
+  let match
   // start is an inclusive index. end, curr, and next are exclusive.
-  var start = 0, end, curr = 0, next = 0;
-  var result = '';
+  let start = 0
+  let end
+  let curr = 0
+  let next = 0
+  let result = ''
 
   // Invariants: 0 <= start <= length-1.
   //   0 <= curr <= next <= max(0, length-2). curr - start <= width.
   // Inside the loop:
   //   A match implies length >= 2, so curr and next are <= length-2.
   while ((match = breakRe.exec(line))) {
-    next = match.index;
+    next = match.index
     // maintain invariant: curr - start <= width
     if (next - start > width) {
-      end = (curr > start) ? curr : next; // derive end <= length-2
-      result += '\n' + line.slice(start, end);
+      end = (curr > start) ? curr : next // derive end <= length-2
+      result += '\n' + line.slice(start, end)
       // skip the space that was output as \n
-      start = end + 1;                    // derive start <= length-1
+      start = end + 1                    // derive start <= length-1
     }
-    curr = next;
+    curr = next
   }
 
   // By the invariants, start <= length-1, so there is something left over.
   // It is either the whole string or a part starting from non-whitespace.
-  result += '\n';
+  result += '\n'
   // Insert a break if the remainder is too long and there is a break available.
   if (line.length - start > width && curr > start) {
-    result += line.slice(start, curr) + '\n' + line.slice(curr + 1);
+    result += line.slice(start, curr) + '\n' + line.slice(curr + 1)
   } else {
-    result += line.slice(start);
+    result += line.slice(start)
   }
 
-  return result.slice(1); // drop extra \n joiner
+  return result.slice(1) // drop extra \n joiner
 }
 
 // Escapes a double-quoted string.
-function escapeString(string) {
-  var result = '';
-  var char = 0;
-  var escapeSeq;
+function escapeString (string) {
+  let result = ''
+  let char = 0
 
-  for (var i = 0; i < string.length; char >= 0x10000 ? i += 2 : i++) {
-    char = codePointAt(string, i);
-    escapeSeq = ESCAPE_SEQUENCES[char];
+  for (let i = 0; i < string.length; char >= 0x10000 ? i += 2 : i++) {
+    char = codePointAt(string, i)
+    const escapeSeq = ESCAPE_SEQUENCES[char]
 
     if (!escapeSeq && isPrintable(char)) {
-      result += string[i];
-      if (char >= 0x10000) result += string[i + 1];
+      result += string[i]
+      if (char >= 0x10000) result += string[i + 1]
     } else {
-      result += escapeSeq || encodeHex(char);
+      result += escapeSeq || encodeHex(char)
     }
   }
 
-  return result;
+  return result
 }
 
-function writeFlowSequence(state, level, object) {
-  var _result = '',
-      _tag    = state.tag,
-      index,
-      length,
-      value;
+function writeFlowSequence (state, level, object) {
+  let _result = ''
+  const _tag = state.tag
 
-  for (index = 0, length = object.length; index < length; index += 1) {
-    value = object[index];
+  for (let index = 0, length = object.length; index < length; index += 1) {
+    let value = object[index]
 
     if (state.replacer) {
-      value = state.replacer.call(object, String(index), value);
+      value = state.replacer.call(object, String(index), value)
     }
 
     // Write only valid elements, put null instead of invalid elements.
     if (writeNode(state, level, value, false, false) ||
         (typeof value === 'undefined' &&
          writeNode(state, level, null, false, false))) {
-
-      if (_result !== '') _result += ',' + (!state.condenseFlow ? ' ' : '');
-      _result += state.dump;
+      if (_result !== '') _result += ',' + (!state.condenseFlow ? ' ' : '')
+      _result += state.dump
     }
   }
 
-  state.tag = _tag;
-  state.dump = '[' + _result + ']';
+  state.tag = _tag
+  state.dump = '[' + _result + ']'
 }
 
-function writeBlockSequence(state, level, object, compact) {
-  var _result = '',
-      _tag    = state.tag,
-      index,
-      length,
-      value;
+function writeBlockSequence (state, level, object, compact) {
+  let _result = ''
+  const _tag = state.tag
 
-  for (index = 0, length = object.length; index < length; index += 1) {
-    value = object[index];
+  for (let index = 0, length = object.length; index < length; index += 1) {
+    let value = object[index]
 
     if (state.replacer) {
-      value = state.replacer.call(object, String(index), value);
+      value = state.replacer.call(object, String(index), value)
     }
 
     // Write only valid elements, put null instead of invalid elements.
     if (writeNode(state, level + 1, value, true, true, false, true) ||
         (typeof value === 'undefined' &&
          writeNode(state, level + 1, null, true, true, false, true))) {
-
       if (!compact || _result !== '') {
-        _result += generateNextLine(state, level);
+        _result += generateNextLine(state, level)
       }
 
       if (state.dump && CHAR_LINE_FEED === state.dump.charCodeAt(0)) {
-        _result += '-';
+        _result += '-'
       } else {
-        _result += '- ';
+        _result += '- '
       }
 
-      _result += state.dump;
+      _result += state.dump
     }
   }
 
-  state.tag = _tag;
-  state.dump = _result || '[]'; // Empty sequence if no valid values.
+  state.tag = _tag
+  state.dump = _result || '[]' // Empty sequence if no valid values.
 }
 
-function writeFlowMapping(state, level, object) {
-  var _result       = '',
-      _tag          = state.tag,
-      objectKeyList = Object.keys(object),
-      index,
-      length,
-      objectKey,
-      objectValue,
-      pairBuffer;
+function writeFlowMapping (state, level, object) {
+  let _result = ''
+  const _tag = state.tag
+  const objectKeyList = Object.keys(object)
 
-  for (index = 0, length = objectKeyList.length; index < length; index += 1) {
+  for (let index = 0, length = objectKeyList.length; index < length; index += 1) {
+    let pairBuffer = ''
+    if (_result !== '') pairBuffer += ', '
 
-    pairBuffer = '';
-    if (_result !== '') pairBuffer += ', ';
+    if (state.condenseFlow) pairBuffer += '"'
 
-    if (state.condenseFlow) pairBuffer += '"';
-
-    objectKey = objectKeyList[index];
-    objectValue = object[objectKey];
+    const objectKey = objectKeyList[index]
+    let objectValue = object[objectKey]
 
     if (state.replacer) {
-      objectValue = state.replacer.call(object, objectKey, objectValue);
+      objectValue = state.replacer.call(object, objectKey, objectValue)
     }
 
     if (!writeNode(state, level, objectKey, false, false)) {
-      continue; // Skip this pair because of invalid key;
+      continue // Skip this pair because of invalid key;
     }
 
-    if (state.dump.length > 1024) pairBuffer += '? ';
+    if (state.dump.length > 1024) pairBuffer += '? '
 
-    pairBuffer += state.dump + (state.condenseFlow ? '"' : '') + ':' + (state.condenseFlow ? '' : ' ');
+    pairBuffer += state.dump + (state.condenseFlow ? '"' : '') + ':' + (state.condenseFlow ? '' : ' ')
 
     if (!writeNode(state, level, objectValue, false, false)) {
-      continue; // Skip this pair because of invalid value.
+      continue // Skip this pair because of invalid value.
     }
 
-    pairBuffer += state.dump;
+    pairBuffer += state.dump
 
     // Both key and value are valid.
-    _result += pairBuffer;
+    _result += pairBuffer
   }
 
-  state.tag = _tag;
-  state.dump = '{' + _result + '}';
+  state.tag = _tag
+  state.dump = '{' + _result + '}'
 }
 
-function writeBlockMapping(state, level, object, compact) {
-  var _result       = '',
-      _tag          = state.tag,
-      objectKeyList = Object.keys(object),
-      index,
-      length,
-      objectKey,
-      objectValue,
-      explicitPair,
-      pairBuffer;
+function writeBlockMapping (state, level, object, compact) {
+  let _result = ''
+  const _tag = state.tag
+  const objectKeyList = Object.keys(object)
 
   // Allow sorting keys so that the output file is deterministic
   if (state.sortKeys === true) {
     // Default sorting
-    objectKeyList.sort();
+    objectKeyList.sort()
   } else if (typeof state.sortKeys === 'function') {
     // Custom sort function
-    objectKeyList.sort(state.sortKeys);
+    objectKeyList.sort(state.sortKeys)
   } else if (state.sortKeys) {
     // Something is wrong
-    throw new YAMLException('sortKeys must be a boolean or a function');
+    throw new YAMLException('sortKeys must be a boolean or a function')
   }
 
-  for (index = 0, length = objectKeyList.length; index < length; index += 1) {
-    pairBuffer = '';
+  for (let index = 0, length = objectKeyList.length; index < length; index += 1) {
+    let pairBuffer = ''
 
     if (!compact || _result !== '') {
-      pairBuffer += generateNextLine(state, level);
+      pairBuffer += generateNextLine(state, level)
     }
 
-    objectKey = objectKeyList[index];
-    objectValue = object[objectKey];
+    const objectKey = objectKeyList[index]
+    let objectValue = object[objectKey]
 
     if (state.replacer) {
-      objectValue = state.replacer.call(object, objectKey, objectValue);
+      objectValue = state.replacer.call(object, objectKey, objectValue)
     }
 
     if (!writeNode(state, level + 1, objectKey, true, true, true)) {
-      continue; // Skip this pair because of invalid key.
+      continue // Skip this pair because of invalid key.
     }
 
-    explicitPair = (state.tag !== null && state.tag !== '?') ||
-                   (state.dump && state.dump.length > 1024);
+    const explicitPair = (state.tag !== null && state.tag !== '?') ||
+                   (state.dump && state.dump.length > 1024)
 
     if (explicitPair) {
       if (state.dump && CHAR_LINE_FEED === state.dump.charCodeAt(0)) {
-        pairBuffer += '?';
+        pairBuffer += '?'
       } else {
-        pairBuffer += '? ';
+        pairBuffer += '? '
       }
     }
 
-    pairBuffer += state.dump;
+    pairBuffer += state.dump
 
     if (explicitPair) {
-      pairBuffer += generateNextLine(state, level);
+      pairBuffer += generateNextLine(state, level)
     }
 
     if (!writeNode(state, level + 1, objectValue, true, explicitPair)) {
-      continue; // Skip this pair because of invalid value.
+      continue // Skip this pair because of invalid value.
     }
 
     if (state.dump && CHAR_LINE_FEED === state.dump.charCodeAt(0)) {
-      pairBuffer += ':';
+      pairBuffer += ':'
     } else {
-      pairBuffer += ': ';
+      pairBuffer += ': '
     }
 
-    pairBuffer += state.dump;
+    pairBuffer += state.dump
 
     // Both key and value are valid.
-    _result += pairBuffer;
+    _result += pairBuffer
   }
 
-  state.tag = _tag;
-  state.dump = _result || '{}'; // Empty mapping if no valid pairs.
+  state.tag = _tag
+  state.dump = _result || '{}' // Empty mapping if no valid pairs.
 }
 
-function detectType(state, object, explicit) {
-  var _result, typeList, index, length, type, style;
+function detectType (state, object, explicit) {
+  const typeList = explicit ? state.explicitTypes : state.implicitTypes
 
-  typeList = explicit ? state.explicitTypes : state.implicitTypes;
+  for (let index = 0, length = typeList.length; index < length; index += 1) {
+    const type = typeList[index]
 
-  for (index = 0, length = typeList.length; index < length; index += 1) {
-    type = typeList[index];
-
-    if ((type.instanceOf  || type.predicate) &&
+    if ((type.instanceOf || type.predicate) &&
         (!type.instanceOf || ((typeof object === 'object') && (object instanceof type.instanceOf))) &&
-        (!type.predicate  || type.predicate(object))) {
-
+        (!type.predicate || type.predicate(object))) {
       if (explicit) {
         if (type.multi && type.representName) {
-          state.tag = type.representName(object);
+          state.tag = type.representName(object)
         } else {
-          state.tag = type.tag;
+          state.tag = type.tag
         }
       } else {
-        state.tag = '?';
+        state.tag = '?'
       }
 
       if (type.represent) {
-        style = state.styleMap[type.tag] || type.defaultStyle;
+        const style = state.styleMap[type.tag] || type.defaultStyle
 
+        let _result
         if (_toString.call(type.represent) === '[object Function]') {
-          _result = type.represent(object, style);
+          _result = type.represent(object, style)
         } else if (_hasOwnProperty.call(type.represent, style)) {
-          _result = type.represent[style](object, style);
+          _result = type.represent[style](object, style)
         } else {
-          throw new YAMLException('!<' + type.tag + '> tag resolver accepts not "' + style + '" style');
+          throw new YAMLException('!<' + type.tag + '> tag resolver accepts not "' + style + '" style')
         }
 
-        state.dump = _result;
+        state.dump = _result
       }
 
-      return true;
+      return true
     }
   }
 
-  return false;
+  return false
 }
 
 // Serializes `object` and writes it to global `result`.
 // Returns true on success, or false on invalid object.
 //
-function writeNode(state, level, object, block, compact, iskey, isblockseq) {
-  state.tag = null;
-  state.dump = object;
+function writeNode (state, level, object, block, compact, iskey, isblockseq) {
+  state.tag = null
+  state.dump = object
 
   if (!detectType(state, object, false)) {
-    detectType(state, object, true);
+    detectType(state, object, true)
   }
 
-  var type = _toString.call(state.dump);
-  var inblock = block;
-  var tagStr;
+  const type = _toString.call(state.dump)
+  const inblock = block
 
   if (block) {
-    block = (state.flowLevel < 0 || state.flowLevel > level);
+    block = (state.flowLevel < 0 || state.flowLevel > level)
   }
 
-  var objectOrArray = type === '[object Object]' || type === '[object Array]',
-      duplicateIndex,
-      duplicate;
+  const objectOrArray = type === '[object Object]' || type === '[object Array]'
+  let duplicateIndex
+  let duplicate
 
   if (objectOrArray) {
-    duplicateIndex = state.duplicates.indexOf(object);
-    duplicate = duplicateIndex !== -1;
+    duplicateIndex = state.duplicates.indexOf(object)
+    duplicate = duplicateIndex !== -1
   }
 
   if ((state.tag !== null && state.tag !== '?') || duplicate || (state.indent !== 2 && level > 0)) {
-    compact = false;
+    compact = false
   }
 
   if (duplicate && state.usedDuplicates[duplicateIndex]) {
-    state.dump = '*ref_' + duplicateIndex;
+    state.dump = '*ref_' + duplicateIndex
   } else {
     if (objectOrArray && duplicate && !state.usedDuplicates[duplicateIndex]) {
-      state.usedDuplicates[duplicateIndex] = true;
+      state.usedDuplicates[duplicateIndex] = true
     }
     if (type === '[object Object]') {
       if (block && (Object.keys(state.dump).length !== 0)) {
-        writeBlockMapping(state, level, state.dump, compact);
+        writeBlockMapping(state, level, state.dump, compact)
         if (duplicate) {
-          state.dump = '&ref_' + duplicateIndex + state.dump;
+          state.dump = '&ref_' + duplicateIndex + state.dump
         }
       } else {
-        writeFlowMapping(state, level, state.dump);
+        writeFlowMapping(state, level, state.dump)
         if (duplicate) {
-          state.dump = '&ref_' + duplicateIndex + ' ' + state.dump;
+          state.dump = '&ref_' + duplicateIndex + ' ' + state.dump
         }
       }
     } else if (type === '[object Array]') {
       if (block && (state.dump.length !== 0)) {
         if (state.noArrayIndent && !isblockseq && level > 0) {
-          writeBlockSequence(state, level - 1, state.dump, compact);
+          writeBlockSequence(state, level - 1, state.dump, compact)
         } else {
-          writeBlockSequence(state, level, state.dump, compact);
+          writeBlockSequence(state, level, state.dump, compact)
         }
         if (duplicate) {
-          state.dump = '&ref_' + duplicateIndex + state.dump;
+          state.dump = '&ref_' + duplicateIndex + state.dump
         }
       } else {
-        writeFlowSequence(state, level, state.dump);
+        writeFlowSequence(state, level, state.dump)
         if (duplicate) {
-          state.dump = '&ref_' + duplicateIndex + ' ' + state.dump;
+          state.dump = '&ref_' + duplicateIndex + ' ' + state.dump
         }
       }
     } else if (type === '[object String]') {
       if (state.tag !== '?') {
-        writeScalar(state, state.dump, level, iskey, inblock);
+        writeScalar(state, state.dump, level, iskey, inblock)
       }
     } else if (type === '[object Undefined]') {
-      return false;
+      return false
     } else {
-      if (state.skipInvalid) return false;
-      throw new YAMLException('unacceptable kind of an object to dump ' + type);
+      if (state.skipInvalid) return false
+      throw new YAMLException('unacceptable kind of an object to dump ' + type)
     }
 
     if (state.tag !== null && state.tag !== '?') {
@@ -44545,87 +41115,82 @@ function writeNode(state, level, object, block, compact, iskey, isblockseq) {
       //
       // Also need to encode '!' because it has special meaning (end of tag prefix).
       //
-      tagStr = encodeURI(
+      let tagStr = encodeURI(
         state.tag[0] === '!' ? state.tag.slice(1) : state.tag
-      ).replace(/!/g, '%21');
+      ).replace(/!/g, '%21')
 
       if (state.tag[0] === '!') {
-        tagStr = '!' + tagStr;
+        tagStr = '!' + tagStr
       } else if (tagStr.slice(0, 18) === 'tag:yaml.org,2002:') {
-        tagStr = '!!' + tagStr.slice(18);
+        tagStr = '!!' + tagStr.slice(18)
       } else {
-        tagStr = '!<' + tagStr + '>';
+        tagStr = '!<' + tagStr + '>'
       }
 
-      state.dump = tagStr + ' ' + state.dump;
+      state.dump = tagStr + ' ' + state.dump
     }
   }
 
-  return true;
+  return true
 }
 
-function getDuplicateReferences(object, state) {
-  var objects = [],
-      duplicatesIndexes = [],
-      index,
-      length;
+function getDuplicateReferences (object, state) {
+  const objects = []
+  const duplicatesIndexes = []
 
-  inspectNode(object, objects, duplicatesIndexes);
+  inspectNode(object, objects, duplicatesIndexes)
 
-  for (index = 0, length = duplicatesIndexes.length; index < length; index += 1) {
-    state.duplicates.push(objects[duplicatesIndexes[index]]);
+  const length = duplicatesIndexes.length
+  for (let index = 0; index < length; index += 1) {
+    state.duplicates.push(objects[duplicatesIndexes[index]])
   }
-  state.usedDuplicates = new Array(length);
+  state.usedDuplicates = new Array(length)
 }
 
-function inspectNode(object, objects, duplicatesIndexes) {
-  var objectKeyList,
-      index,
-      length;
-
+function inspectNode (object, objects, duplicatesIndexes) {
   if (object !== null && typeof object === 'object') {
-    index = objects.indexOf(object);
+    const index = objects.indexOf(object)
     if (index !== -1) {
       if (duplicatesIndexes.indexOf(index) === -1) {
-        duplicatesIndexes.push(index);
+        duplicatesIndexes.push(index)
       }
     } else {
-      objects.push(object);
+      objects.push(object)
 
       if (Array.isArray(object)) {
-        for (index = 0, length = object.length; index < length; index += 1) {
-          inspectNode(object[index], objects, duplicatesIndexes);
+        for (let i = 0, length = object.length; i < length; i += 1) {
+          inspectNode(object[i], objects, duplicatesIndexes)
         }
       } else {
-        objectKeyList = Object.keys(object);
+        const objectKeyList = Object.keys(object)
 
-        for (index = 0, length = objectKeyList.length; index < length; index += 1) {
-          inspectNode(object[objectKeyList[index]], objects, duplicatesIndexes);
+        for (let i = 0, length = objectKeyList.length; i < length; i += 1) {
+          inspectNode(object[objectKeyList[i]], objects, duplicatesIndexes)
         }
       }
     }
   }
 }
 
-function dump(input, options) {
-  options = options || {};
+function dump (input, options) {
+  options = options || {}
 
-  var state = new State(options);
+  const state = new State(options)
 
-  if (!state.noRefs) getDuplicateReferences(input, state);
+  if (!state.noRefs) getDuplicateReferences(input, state)
 
-  var value = input;
+  let value = input
 
   if (state.replacer) {
-    value = state.replacer.call({ '': value }, '', value);
+    value = state.replacer.call({ '': value }, '', value)
   }
 
-  if (writeNode(state, 0, value, true, true)) return state.dump + '\n';
+  if (writeNode(state, 0, value, true, true)) return state.dump + '\n'
 
-  return '';
+  return ''
 }
 
-module.exports.dump = dump;
+module.exports.dump = dump
 
 
 /***/ }),
@@ -44638,57 +41203,53 @@ module.exports.dump = dump;
 //
 
 
+function formatError (exception, compact) {
+  let where = ''
+  const message = exception.reason || '(unknown reason)'
 
-function formatError(exception, compact) {
-  var where = '', message = exception.reason || '(unknown reason)';
-
-  if (!exception.mark) return message;
+  if (!exception.mark) return message
 
   if (exception.mark.name) {
-    where += 'in "' + exception.mark.name + '" ';
+    where += 'in "' + exception.mark.name + '" '
   }
 
-  where += '(' + (exception.mark.line + 1) + ':' + (exception.mark.column + 1) + ')';
+  where += '(' + (exception.mark.line + 1) + ':' + (exception.mark.column + 1) + ')'
 
   if (!compact && exception.mark.snippet) {
-    where += '\n\n' + exception.mark.snippet;
+    where += '\n\n' + exception.mark.snippet
   }
 
-  return message + ' ' + where;
+  return message + ' ' + where
 }
 
-
-function YAMLException(reason, mark) {
+function YAMLException (reason, mark) {
   // Super constructor
-  Error.call(this);
+  Error.call(this)
 
-  this.name = 'YAMLException';
-  this.reason = reason;
-  this.mark = mark;
-  this.message = formatError(this, false);
+  this.name = 'YAMLException'
+  this.reason = reason
+  this.mark = mark
+  this.message = formatError(this, false)
 
   // Include stack trace in error object
   if (Error.captureStackTrace) {
     // Chrome and NodeJS
-    Error.captureStackTrace(this, this.constructor);
+    Error.captureStackTrace(this, this.constructor)
   } else {
     // FF, IE 10+ and Safari 6+. Fallback for others
-    this.stack = (new Error()).stack || '';
+    this.stack = (new Error()).stack || ''
   }
 }
 
-
 // Inherit from Error
-YAMLException.prototype = Object.create(Error.prototype);
-YAMLException.prototype.constructor = YAMLException;
+YAMLException.prototype = Object.create(Error.prototype)
+YAMLException.prototype.constructor = YAMLException
 
+YAMLException.prototype.toString = function toString (compact) {
+  return this.name + ': ' + formatError(this, compact)
+}
 
-YAMLException.prototype.toString = function toString(compact) {
-  return this.name + ': ' + formatError(this, compact);
-};
-
-
-module.exports = YAMLException;
+module.exports = YAMLException
 
 
 /***/ }),
@@ -44699,161 +41260,177 @@ module.exports = YAMLException;
 "use strict";
 
 
-/*eslint-disable max-len,no-use-before-define*/
+const common = __nccwpck_require__(19816)
+const YAMLException = __nccwpck_require__(41248)
+const makeSnippet = __nccwpck_require__(9440)
+const DEFAULT_SCHEMA = __nccwpck_require__(97336)
 
-var common              = __nccwpck_require__(19816);
-var YAMLException       = __nccwpck_require__(41248);
-var makeSnippet         = __nccwpck_require__(9440);
-var DEFAULT_SCHEMA      = __nccwpck_require__(97336);
+const _hasOwnProperty = Object.prototype.hasOwnProperty
 
+const CONTEXT_FLOW_IN = 1
+const CONTEXT_FLOW_OUT = 2
+const CONTEXT_BLOCK_IN = 3
+const CONTEXT_BLOCK_OUT = 4
 
-var _hasOwnProperty = Object.prototype.hasOwnProperty;
+const CHOMPING_CLIP = 1
+const CHOMPING_STRIP = 2
+const CHOMPING_KEEP = 3
 
+// eslint-disable-next-line no-control-regex
+const PATTERN_NON_PRINTABLE = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x84\x86-\x9F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:[^\uD800-\uDBFF]|^)[\uDC00-\uDFFF]/
+const PATTERN_NON_ASCII_LINE_BREAKS = /[\x85\u2028\u2029]/
+// eslint-disable-next-line no-useless-escape
+const PATTERN_FLOW_INDICATORS = /[,\[\]{}]/
+// eslint-disable-next-line no-useless-escape
+const PATTERN_TAG_HANDLE = /^(?:!|!!|![0-9A-Za-z-]+!)$/
+// eslint-disable-next-line no-useless-escape
+const PATTERN_TAG_URI = /^(?:!|[^,\[\]{}])(?:%[0-9a-f]{2}|[0-9a-z\-#;/?:@&=+$,_.!~*'()\[\]])*$/i
 
-var CONTEXT_FLOW_IN   = 1;
-var CONTEXT_FLOW_OUT  = 2;
-var CONTEXT_BLOCK_IN  = 3;
-var CONTEXT_BLOCK_OUT = 4;
+function _class (obj) { return Object.prototype.toString.call(obj) }
 
-
-var CHOMPING_CLIP  = 1;
-var CHOMPING_STRIP = 2;
-var CHOMPING_KEEP  = 3;
-
-
-var PATTERN_NON_PRINTABLE         = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x84\x86-\x9F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:[^\uD800-\uDBFF]|^)[\uDC00-\uDFFF]/;
-var PATTERN_NON_ASCII_LINE_BREAKS = /[\x85\u2028\u2029]/;
-var PATTERN_FLOW_INDICATORS       = /[,\[\]\{\}]/;
-var PATTERN_TAG_HANDLE            = /^(?:!|!!|![a-z\-]+!)$/i;
-var PATTERN_TAG_URI               = /^(?:!|[^,\[\]\{\}])(?:%[0-9a-f]{2}|[0-9a-z\-#;\/\?:@&=\+\$,_\.!~\*'\(\)\[\]])*$/i;
-
-
-function _class(obj) { return Object.prototype.toString.call(obj); }
-
-function is_EOL(c) {
-  return (c === 0x0A/* LF */) || (c === 0x0D/* CR */);
+function isEol (c) {
+  return (c === 0x0A/* LF */) || (c === 0x0D/* CR */)
 }
 
-function is_WHITE_SPACE(c) {
-  return (c === 0x09/* Tab */) || (c === 0x20/* Space */);
+function isWhiteSpace (c) {
+  return (c === 0x09/* Tab */) || (c === 0x20/* Space */)
 }
 
-function is_WS_OR_EOL(c) {
+function isWsOrEol (c) {
   return (c === 0x09/* Tab */) ||
          (c === 0x20/* Space */) ||
          (c === 0x0A/* LF */) ||
-         (c === 0x0D/* CR */);
+         (c === 0x0D/* CR */)
 }
 
-function is_FLOW_INDICATOR(c) {
+function isFlowIndicator (c) {
   return c === 0x2C/* , */ ||
          c === 0x5B/* [ */ ||
          c === 0x5D/* ] */ ||
          c === 0x7B/* { */ ||
-         c === 0x7D/* } */;
+         c === 0x7D/* } */
 }
 
-function fromHexCode(c) {
-  var lc;
-
-  if ((0x30/* 0 */ <= c) && (c <= 0x39/* 9 */)) {
-    return c - 0x30;
+function fromHexCode (c) {
+  if ((c >= 0x30/* 0 */) && (c <= 0x39/* 9 */)) {
+    return c - 0x30
   }
 
-  /*eslint-disable no-bitwise*/
-  lc = c | 0x20;
+  const lc = c | 0x20
 
-  if ((0x61/* a */ <= lc) && (lc <= 0x66/* f */)) {
-    return lc - 0x61 + 10;
+  if ((lc >= 0x61/* a */) && (lc <= 0x66/* f */)) {
+    return lc - 0x61 + 10
   }
 
-  return -1;
+  return -1
 }
 
-function escapedHexLen(c) {
-  if (c === 0x78/* x */) { return 2; }
-  if (c === 0x75/* u */) { return 4; }
-  if (c === 0x55/* U */) { return 8; }
-  return 0;
+function escapedHexLen (c) {
+  if (c === 0x78/* x */) { return 2 }
+  if (c === 0x75/* u */) { return 4 }
+  if (c === 0x55/* U */) { return 8 }
+  return 0
 }
 
-function fromDecimalCode(c) {
-  if ((0x30/* 0 */ <= c) && (c <= 0x39/* 9 */)) {
-    return c - 0x30;
+function fromDecimalCode (c) {
+  if ((c >= 0x30/* 0 */) && (c <= 0x39/* 9 */)) {
+    return c - 0x30
   }
 
-  return -1;
+  return -1
 }
 
-function simpleEscapeSequence(c) {
-  /* eslint-disable indent */
-  return (c === 0x30/* 0 */) ? '\x00' :
-        (c === 0x61/* a */) ? '\x07' :
-        (c === 0x62/* b */) ? '\x08' :
-        (c === 0x74/* t */) ? '\x09' :
-        (c === 0x09/* Tab */) ? '\x09' :
-        (c === 0x6E/* n */) ? '\x0A' :
-        (c === 0x76/* v */) ? '\x0B' :
-        (c === 0x66/* f */) ? '\x0C' :
-        (c === 0x72/* r */) ? '\x0D' :
-        (c === 0x65/* e */) ? '\x1B' :
-        (c === 0x20/* Space */) ? ' ' :
-        (c === 0x22/* " */) ? '\x22' :
-        (c === 0x2F/* / */) ? '/' :
-        (c === 0x5C/* \ */) ? '\x5C' :
-        (c === 0x4E/* N */) ? '\x85' :
-        (c === 0x5F/* _ */) ? '\xA0' :
-        (c === 0x4C/* L */) ? '\u2028' :
-        (c === 0x50/* P */) ? '\u2029' : '';
+function simpleEscapeSequence (c) {
+  switch (c) {
+    case 0x30/* 0 */: return '\x00'
+    case 0x61/* a */: return '\x07'
+    case 0x62/* b */: return '\x08'
+    case 0x74/* t */: return '\x09'
+    case 0x09/* Tab */: return '\x09'
+    case 0x6E/* n */: return '\x0A'
+    case 0x76/* v */: return '\x0B'
+    case 0x66/* f */: return '\x0C'
+    case 0x72/* r */: return '\x0D'
+    case 0x65/* e */: return '\x1B'
+    case 0x20/* Space */: return ' '
+    case 0x22/* " */: return '\x22'
+    case 0x2F/* / */: return '/'
+    case 0x5C/* \ */: return '\x5C'
+    case 0x4E/* N */: return '\x85'
+    case 0x5F/* _ */: return '\xA0'
+    case 0x4C/* L */: return '\u2028'
+    case 0x50/* P */: return '\u2029'
+    default: return ''
+  }
 }
 
-function charFromCodepoint(c) {
+function charFromCodepoint (c) {
   if (c <= 0xFFFF) {
-    return String.fromCharCode(c);
+    return String.fromCharCode(c)
   }
   // Encode UTF-16 surrogate pair
   // https://en.wikipedia.org/wiki/UTF-16#Code_points_U.2B010000_to_U.2B10FFFF
   return String.fromCharCode(
     ((c - 0x010000) >> 10) + 0xD800,
     ((c - 0x010000) & 0x03FF) + 0xDC00
-  );
+  )
 }
 
-var simpleEscapeCheck = new Array(256); // integer, for fast access
-var simpleEscapeMap = new Array(256);
-for (var i = 0; i < 256; i++) {
-  simpleEscapeCheck[i] = simpleEscapeSequence(i) ? 1 : 0;
-  simpleEscapeMap[i] = simpleEscapeSequence(i);
+// set a property of a literal object, while protecting against prototype pollution,
+// see https://github.com/nodeca/js-yaml/issues/164 for more details
+function setProperty (object, key, value) {
+  // used for this specific key only because Object.defineProperty is slow
+  if (key === '__proto__') {
+    Object.defineProperty(object, key, {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: value
+    })
+  } else {
+    object[key] = value
+  }
 }
 
+const simpleEscapeCheck = new Array(256) // integer, for fast access
+const simpleEscapeMap = new Array(256)
+for (let i = 0; i < 256; i++) {
+  simpleEscapeCheck[i] = simpleEscapeSequence(i) ? 1 : 0
+  simpleEscapeMap[i] = simpleEscapeSequence(i)
+}
 
-function State(input, options) {
-  this.input = input;
+function State (input, options) {
+  this.input = input
 
-  this.filename  = options['filename']  || null;
-  this.schema    = options['schema']    || DEFAULT_SCHEMA;
-  this.onWarning = options['onWarning'] || null;
+  this.filename = options['filename'] || null
+  this.schema = options['schema'] || DEFAULT_SCHEMA
+  this.onWarning = options['onWarning'] || null
   // (Hidden) Remove? makes the loader to expect YAML 1.1 documents
   // if such documents have no explicit %YAML directive
-  this.legacy    = options['legacy']    || false;
+  this.legacy = options['legacy'] || false
 
-  this.json      = options['json']      || false;
-  this.listener  = options['listener']  || null;
+  this.json = options['json'] || false
+  this.listener = options['listener'] || null
+  this.maxDepth = typeof options['maxDepth'] === 'number' ? options['maxDepth'] : 100
+  this.maxTotalMergeKeys = typeof options['maxTotalMergeKeys'] === 'number' ? options['maxTotalMergeKeys'] : 10000
 
-  this.implicitTypes = this.schema.compiledImplicit;
-  this.typeMap       = this.schema.compiledTypeMap;
+  this.implicitTypes = this.schema.compiledImplicit
+  this.typeMap = this.schema.compiledTypeMap
 
-  this.length     = input.length;
-  this.position   = 0;
-  this.line       = 0;
-  this.lineStart  = 0;
-  this.lineIndent = 0;
+  this.length = input.length
+  this.position = 0
+  this.line = 0
+  this.lineStart = 0
+  this.lineIndent = 0
+  this.depth = 0
+  this.totalMergeKeys = 0
 
   // position of first leading tab in the current line,
   // used to make sure there are no tabs in the indentation
-  this.firstTabInLine = -1;
+  this.firstTabInLine = -1
 
-  this.documents = [];
+  this.documents = []
+  this.anchorMapTransactions = []
 
   /*
   this.version;
@@ -44863,164 +41440,242 @@ function State(input, options) {
   this.tag;
   this.anchor;
   this.kind;
-  this.result;*/
-
+  this.result; */
 }
 
-
-function generateError(state, message) {
-  var mark = {
-    name:     state.filename,
-    buffer:   state.input.slice(0, -1), // omit trailing \0
+function generateError (state, message) {
+  const mark = {
+    name: state.filename,
+    buffer: state.input.slice(0, -1), // omit trailing \0
     position: state.position,
-    line:     state.line,
-    column:   state.position - state.lineStart
-  };
+    line: state.line,
+    column: state.position - state.lineStart
+  }
 
-  mark.snippet = makeSnippet(mark);
+  mark.snippet = makeSnippet(mark)
 
-  return new YAMLException(message, mark);
+  return new YAMLException(message, mark)
 }
 
-function throwError(state, message) {
-  throw generateError(state, message);
+function throwError (state, message) {
+  throw generateError(state, message)
 }
 
-function throwWarning(state, message) {
+function throwWarning (state, message) {
   if (state.onWarning) {
-    state.onWarning.call(null, generateError(state, message));
+    state.onWarning.call(null, generateError(state, message))
   }
 }
 
+function storeAnchor (state, name, value) {
+  const transactions = state.anchorMapTransactions
 
-var directiveHandlers = {
+  if (transactions.length !== 0) {
+    const transaction = transactions[transactions.length - 1]
 
-  YAML: function handleYamlDirective(state, name, args) {
+    if (!_hasOwnProperty.call(transaction, name)) {
+      transaction[name] = {
+        existed: _hasOwnProperty.call(state.anchorMap, name),
+        value: state.anchorMap[name]
+      }
+    }
+  }
 
-    var match, major, minor;
+  state.anchorMap[name] = value
+}
 
+function beginAnchorTransaction (state) {
+  state.anchorMapTransactions.push(Object.create(null))
+}
+
+function commitAnchorTransaction (state) {
+  const transaction = state.anchorMapTransactions.pop()
+  const transactions = state.anchorMapTransactions
+
+  if (transactions.length === 0) return
+
+  const parent = transactions[transactions.length - 1]
+  const names = Object.keys(transaction)
+
+  for (let index = 0, length = names.length; index < length; index += 1) {
+    const name = names[index]
+
+    if (!_hasOwnProperty.call(parent, name)) {
+      parent[name] = transaction[name]
+    }
+  }
+}
+
+function rollbackAnchorTransaction (state) {
+  const transaction = state.anchorMapTransactions.pop()
+  const names = Object.keys(transaction)
+
+  for (let index = names.length - 1; index >= 0; index -= 1) {
+    const entry = transaction[names[index]]
+
+    if (entry.existed) {
+      state.anchorMap[names[index]] = entry.value
+    } else {
+      delete state.anchorMap[names[index]]
+    }
+  }
+}
+
+function snapshotState (state) {
+  return {
+    position: state.position,
+    line: state.line,
+    lineStart: state.lineStart,
+    lineIndent: state.lineIndent,
+    firstTabInLine: state.firstTabInLine,
+    tag: state.tag,
+    anchor: state.anchor,
+    kind: state.kind,
+    result: state.result
+  }
+}
+
+function restoreState (state, snapshot) {
+  state.position = snapshot.position
+  state.line = snapshot.line
+  state.lineStart = snapshot.lineStart
+  state.lineIndent = snapshot.lineIndent
+  state.firstTabInLine = snapshot.firstTabInLine
+  state.tag = snapshot.tag
+  state.anchor = snapshot.anchor
+  state.kind = snapshot.kind
+  state.result = snapshot.result
+}
+
+const directiveHandlers = {
+
+  YAML: function handleYamlDirective (state, name, args) {
     if (state.version !== null) {
-      throwError(state, 'duplication of %YAML directive');
+      throwError(state, 'duplication of %YAML directive')
     }
 
     if (args.length !== 1) {
-      throwError(state, 'YAML directive accepts exactly one argument');
+      throwError(state, 'YAML directive accepts exactly one argument')
     }
 
-    match = /^([0-9]+)\.([0-9]+)$/.exec(args[0]);
+    const match = /^([0-9]+)\.([0-9]+)$/.exec(args[0])
 
     if (match === null) {
-      throwError(state, 'ill-formed argument of the YAML directive');
+      throwError(state, 'ill-formed argument of the YAML directive')
     }
 
-    major = parseInt(match[1], 10);
-    minor = parseInt(match[2], 10);
+    const major = parseInt(match[1], 10)
+    const minor = parseInt(match[2], 10)
 
     if (major !== 1) {
-      throwError(state, 'unacceptable YAML version of the document');
+      throwError(state, 'unacceptable YAML version of the document')
     }
 
-    state.version = args[0];
-    state.checkLineBreaks = (minor < 2);
+    state.version = args[0]
+    state.checkLineBreaks = (minor < 2)
 
     if (minor !== 1 && minor !== 2) {
-      throwWarning(state, 'unsupported YAML version of the document');
+      throwWarning(state, 'unsupported YAML version of the document')
     }
   },
 
-  TAG: function handleTagDirective(state, name, args) {
-
-    var handle, prefix;
+  TAG: function handleTagDirective (state, name, args) {
+    let prefix
 
     if (args.length !== 2) {
-      throwError(state, 'TAG directive accepts exactly two arguments');
+      throwError(state, 'TAG directive accepts exactly two arguments')
     }
 
-    handle = args[0];
-    prefix = args[1];
+    const handle = args[0]
+    prefix = args[1]
 
     if (!PATTERN_TAG_HANDLE.test(handle)) {
-      throwError(state, 'ill-formed tag handle (first argument) of the TAG directive');
+      throwError(state, 'ill-formed tag handle (first argument) of the TAG directive')
     }
 
     if (_hasOwnProperty.call(state.tagMap, handle)) {
-      throwError(state, 'there is a previously declared suffix for "' + handle + '" tag handle');
+      throwError(state, 'there is a previously declared suffix for "' + handle + '" tag handle')
     }
 
     if (!PATTERN_TAG_URI.test(prefix)) {
-      throwError(state, 'ill-formed tag prefix (second argument) of the TAG directive');
+      throwError(state, 'ill-formed tag prefix (second argument) of the TAG directive')
     }
 
     try {
-      prefix = decodeURIComponent(prefix);
+      prefix = decodeURIComponent(prefix)
     } catch (err) {
-      throwError(state, 'tag prefix is malformed: ' + prefix);
+      throwError(state, 'tag prefix is malformed: ' + prefix)
     }
 
-    state.tagMap[handle] = prefix;
+    state.tagMap[handle] = prefix
   }
-};
+}
 
-
-function captureSegment(state, start, end, checkJson) {
-  var _position, _length, _character, _result;
-
+function captureSegment (state, start, end, checkJson) {
   if (start < end) {
-    _result = state.input.slice(start, end);
+    const _result = state.input.slice(start, end)
 
     if (checkJson) {
-      for (_position = 0, _length = _result.length; _position < _length; _position += 1) {
-        _character = _result.charCodeAt(_position);
+      for (let _position = 0, _length = _result.length; _position < _length; _position += 1) {
+        const _character = _result.charCodeAt(_position)
         if (!(_character === 0x09 ||
-              (0x20 <= _character && _character <= 0x10FFFF))) {
-          throwError(state, 'expected valid JSON character');
+              (_character >= 0x20 && _character <= 0x10FFFF))) {
+          throwError(state, 'expected valid JSON character')
         }
       }
     } else if (PATTERN_NON_PRINTABLE.test(_result)) {
-      throwError(state, 'the stream contains non-printable characters');
+      throwError(state, 'the stream contains non-printable characters')
     }
 
-    state.result += _result;
+    state.result += _result
   }
 }
 
-function mergeMappings(state, destination, source, overridableKeys) {
-  var sourceKeys, key, index, quantity;
+function chargeMergeWork (state) {
+  state.totalMergeKeys++
 
+  if (state.maxTotalMergeKeys !== -1 && state.totalMergeKeys > state.maxTotalMergeKeys) {
+    throwError(state, 'merge keys exceeded maxTotalMergeKeys (' + state.maxTotalMergeKeys + ')')
+  }
+}
+
+function mergeMappings (state, destination, source, overridableKeys) {
   if (!common.isObject(source)) {
-    throwError(state, 'cannot merge mappings; the provided source object is unacceptable');
+    throwError(state, 'cannot merge mappings; the provided source object is unacceptable')
   }
 
-  sourceKeys = Object.keys(source);
+  // Count the source mapping itself to bound sequences of empty mappings.
+  chargeMergeWork(state)
 
-  for (index = 0, quantity = sourceKeys.length; index < quantity; index += 1) {
-    key = sourceKeys[index];
+  const sourceKeys = Object.keys(source)
+
+  for (let index = 0, quantity = sourceKeys.length; index < quantity; index += 1) {
+    const key = sourceKeys[index]
+
+    chargeMergeWork(state)
 
     if (!_hasOwnProperty.call(destination, key)) {
-      destination[key] = source[key];
-      overridableKeys[key] = true;
+      setProperty(destination, key, source[key])
+      overridableKeys[key] = true
     }
   }
 }
 
-function storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, valueNode,
+function storeMappingPair (state, _result, overridableKeys, keyTag, keyNode, valueNode,
   startLine, startLineStart, startPos) {
-
-  var index, quantity;
-
   // The output is a plain object here, so keys can only be strings.
   // We need to convert keyNode to a string, but doing so can hang the process
   // (deeply nested arrays that explode exponentially using aliases).
   if (Array.isArray(keyNode)) {
-    keyNode = Array.prototype.slice.call(keyNode);
+    keyNode = Array.prototype.slice.call(keyNode)
 
-    for (index = 0, quantity = keyNode.length; index < quantity; index += 1) {
+    for (let index = 0, quantity = keyNode.length; index < quantity; index += 1) {
       if (Array.isArray(keyNode[index])) {
-        throwError(state, 'nested arrays are not supported inside keys');
+        throwError(state, 'nested arrays are not supported inside keys')
       }
 
       if (typeof keyNode === 'object' && _class(keyNode[index]) === '[object Object]') {
-        keyNode[index] = '[object Object]';
+        keyNode[index] = '[object Object]'
       }
     }
   }
@@ -45029,824 +41684,780 @@ function storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, valu
   // (still use its own toString for arrays, timestamps,
   // and whatever user schema extensions happen to have @@toStringTag)
   if (typeof keyNode === 'object' && _class(keyNode) === '[object Object]') {
-    keyNode = '[object Object]';
+    keyNode = '[object Object]'
   }
 
-
-  keyNode = String(keyNode);
+  keyNode = String(keyNode)
 
   if (_result === null) {
-    _result = {};
+    _result = {}
   }
 
   if (keyTag === 'tag:yaml.org,2002:merge') {
     if (Array.isArray(valueNode)) {
-      for (index = 0, quantity = valueNode.length; index < quantity; index += 1) {
-        mergeMappings(state, _result, valueNode[index], overridableKeys);
+      if (valueNode.length > 100) {
+        throwError(state, 'abnormal merge sequence size')
+      }
+
+      for (let index = 0, quantity = valueNode.length; index < quantity; index += 1) {
+        mergeMappings(state, _result, valueNode[index], overridableKeys)
       }
     } else {
-      mergeMappings(state, _result, valueNode, overridableKeys);
+      mergeMappings(state, _result, valueNode, overridableKeys)
     }
   } else {
     if (!state.json &&
         !_hasOwnProperty.call(overridableKeys, keyNode) &&
         _hasOwnProperty.call(_result, keyNode)) {
-      state.line = startLine || state.line;
-      state.lineStart = startLineStart || state.lineStart;
-      state.position = startPos || state.position;
-      throwError(state, 'duplicated mapping key');
+      state.line = startLine || state.line
+      state.lineStart = startLineStart || state.lineStart
+      state.position = startPos || state.position
+      throwError(state, 'duplicated mapping key')
     }
 
-    // used for this specific key only because Object.defineProperty is slow
-    if (keyNode === '__proto__') {
-      Object.defineProperty(_result, keyNode, {
-        configurable: true,
-        enumerable: true,
-        writable: true,
-        value: valueNode
-      });
-    } else {
-      _result[keyNode] = valueNode;
-    }
-    delete overridableKeys[keyNode];
+    setProperty(_result, keyNode, valueNode)
+    delete overridableKeys[keyNode]
   }
 
-  return _result;
+  return _result
 }
 
-function readLineBreak(state) {
-  var ch;
-
-  ch = state.input.charCodeAt(state.position);
+function readLineBreak (state) {
+  const ch = state.input.charCodeAt(state.position)
 
   if (ch === 0x0A/* LF */) {
-    state.position++;
+    state.position++
   } else if (ch === 0x0D/* CR */) {
-    state.position++;
+    state.position++
     if (state.input.charCodeAt(state.position) === 0x0A/* LF */) {
-      state.position++;
+      state.position++
     }
   } else {
-    throwError(state, 'a line break is expected');
+    throwError(state, 'a line break is expected')
   }
 
-  state.line += 1;
-  state.lineStart = state.position;
-  state.firstTabInLine = -1;
+  state.line += 1
+  state.lineStart = state.position
+  state.firstTabInLine = -1
 }
 
-function skipSeparationSpace(state, allowComments, checkIndent) {
-  var lineBreaks = 0,
-      ch = state.input.charCodeAt(state.position);
+function skipSeparationSpace (state, allowComments, checkIndent) {
+  let lineBreaks = 0
+  let ch = state.input.charCodeAt(state.position)
 
   while (ch !== 0) {
-    while (is_WHITE_SPACE(ch)) {
+    while (isWhiteSpace(ch)) {
       if (ch === 0x09/* Tab */ && state.firstTabInLine === -1) {
-        state.firstTabInLine = state.position;
+        state.firstTabInLine = state.position
       }
-      ch = state.input.charCodeAt(++state.position);
+      ch = state.input.charCodeAt(++state.position)
     }
 
     if (allowComments && ch === 0x23/* # */) {
       do {
-        ch = state.input.charCodeAt(++state.position);
-      } while (ch !== 0x0A/* LF */ && ch !== 0x0D/* CR */ && ch !== 0);
+        ch = state.input.charCodeAt(++state.position)
+      } while (ch !== 0x0A/* LF */ && ch !== 0x0D/* CR */ && ch !== 0)
     }
 
-    if (is_EOL(ch)) {
-      readLineBreak(state);
+    if (isEol(ch)) {
+      readLineBreak(state)
 
-      ch = state.input.charCodeAt(state.position);
-      lineBreaks++;
-      state.lineIndent = 0;
+      ch = state.input.charCodeAt(state.position)
+      lineBreaks++
+      state.lineIndent = 0
 
       while (ch === 0x20/* Space */) {
-        state.lineIndent++;
-        ch = state.input.charCodeAt(++state.position);
+        state.lineIndent++
+        ch = state.input.charCodeAt(++state.position)
       }
     } else {
-      break;
+      break
     }
   }
 
   if (checkIndent !== -1 && lineBreaks !== 0 && state.lineIndent < checkIndent) {
-    throwWarning(state, 'deficient indentation');
+    throwWarning(state, 'deficient indentation')
   }
 
-  return lineBreaks;
+  return lineBreaks
 }
 
-function testDocumentSeparator(state) {
-  var _position = state.position,
-      ch;
-
-  ch = state.input.charCodeAt(_position);
+function testDocumentSeparator (state) {
+  let _position = state.position
+  let ch = state.input.charCodeAt(_position)
 
   // Condition state.position === state.lineStart is tested
   // in parent on each call, for efficiency. No needs to test here again.
   if ((ch === 0x2D/* - */ || ch === 0x2E/* . */) &&
       ch === state.input.charCodeAt(_position + 1) &&
       ch === state.input.charCodeAt(_position + 2)) {
+    _position += 3
 
-    _position += 3;
+    ch = state.input.charCodeAt(_position)
 
-    ch = state.input.charCodeAt(_position);
-
-    if (ch === 0 || is_WS_OR_EOL(ch)) {
-      return true;
+    if (ch === 0 || isWsOrEol(ch)) {
+      return true
     }
   }
 
-  return false;
+  return false
 }
 
-function writeFoldedLines(state, count) {
+function writeFoldedLines (state, count) {
   if (count === 1) {
-    state.result += ' ';
+    state.result += ' '
   } else if (count > 1) {
-    state.result += common.repeat('\n', count - 1);
+    state.result += common.repeat('\n', count - 1)
   }
 }
 
+function readPlainScalar (state, nodeIndent, withinFlowCollection) {
+  let captureStart
+  let captureEnd
+  let hasPendingContent
+  let _line
+  let _lineStart
+  let _lineIndent
+  const _kind = state.kind
+  const _result = state.result
 
-function readPlainScalar(state, nodeIndent, withinFlowCollection) {
-  var preceding,
-      following,
-      captureStart,
-      captureEnd,
-      hasPendingContent,
-      _line,
-      _lineStart,
-      _lineIndent,
-      _kind = state.kind,
-      _result = state.result,
-      ch;
+  let ch = state.input.charCodeAt(state.position)
 
-  ch = state.input.charCodeAt(state.position);
-
-  if (is_WS_OR_EOL(ch)      ||
-      is_FLOW_INDICATOR(ch) ||
-      ch === 0x23/* # */    ||
-      ch === 0x26/* & */    ||
-      ch === 0x2A/* * */    ||
-      ch === 0x21/* ! */    ||
-      ch === 0x7C/* | */    ||
-      ch === 0x3E/* > */    ||
-      ch === 0x27/* ' */    ||
-      ch === 0x22/* " */    ||
-      ch === 0x25/* % */    ||
-      ch === 0x40/* @ */    ||
+  if (isWsOrEol(ch) ||
+      isFlowIndicator(ch) ||
+      ch === 0x23/* # */ ||
+      ch === 0x26/* & */ ||
+      ch === 0x2A/* * */ ||
+      ch === 0x21/* ! */ ||
+      ch === 0x7C/* | */ ||
+      ch === 0x3E/* > */ ||
+      ch === 0x27/* ' */ ||
+      ch === 0x22/* " */ ||
+      ch === 0x25/* % */ ||
+      ch === 0x40/* @ */ ||
       ch === 0x60/* ` */) {
-    return false;
+    return false
   }
 
   if (ch === 0x3F/* ? */ || ch === 0x2D/* - */) {
-    following = state.input.charCodeAt(state.position + 1);
+    const following = state.input.charCodeAt(state.position + 1)
 
-    if (is_WS_OR_EOL(following) ||
-        withinFlowCollection && is_FLOW_INDICATOR(following)) {
-      return false;
+    if (isWsOrEol(following) ||
+        (withinFlowCollection && isFlowIndicator(following))) {
+      return false
     }
   }
 
-  state.kind = 'scalar';
-  state.result = '';
-  captureStart = captureEnd = state.position;
-  hasPendingContent = false;
+  state.kind = 'scalar'
+  state.result = ''
+  captureStart = captureEnd = state.position
+  hasPendingContent = false
 
   while (ch !== 0) {
     if (ch === 0x3A/* : */) {
-      following = state.input.charCodeAt(state.position + 1);
+      const following = state.input.charCodeAt(state.position + 1)
 
-      if (is_WS_OR_EOL(following) ||
-          withinFlowCollection && is_FLOW_INDICATOR(following)) {
-        break;
+      if (isWsOrEol(following) ||
+          (withinFlowCollection && isFlowIndicator(following))) {
+        break
       }
-
     } else if (ch === 0x23/* # */) {
-      preceding = state.input.charCodeAt(state.position - 1);
+      const preceding = state.input.charCodeAt(state.position - 1)
 
-      if (is_WS_OR_EOL(preceding)) {
-        break;
+      if (isWsOrEol(preceding)) {
+        break
       }
-
     } else if ((state.position === state.lineStart && testDocumentSeparator(state)) ||
-               withinFlowCollection && is_FLOW_INDICATOR(ch)) {
-      break;
-
-    } else if (is_EOL(ch)) {
-      _line = state.line;
-      _lineStart = state.lineStart;
-      _lineIndent = state.lineIndent;
-      skipSeparationSpace(state, false, -1);
+               (withinFlowCollection && isFlowIndicator(ch))) {
+      break
+    } else if (isEol(ch)) {
+      _line = state.line
+      _lineStart = state.lineStart
+      _lineIndent = state.lineIndent
+      skipSeparationSpace(state, false, -1)
 
       if (state.lineIndent >= nodeIndent) {
-        hasPendingContent = true;
-        ch = state.input.charCodeAt(state.position);
-        continue;
+        hasPendingContent = true
+        ch = state.input.charCodeAt(state.position)
+        continue
       } else {
-        state.position = captureEnd;
-        state.line = _line;
-        state.lineStart = _lineStart;
-        state.lineIndent = _lineIndent;
-        break;
+        state.position = captureEnd
+        state.line = _line
+        state.lineStart = _lineStart
+        state.lineIndent = _lineIndent
+        break
       }
     }
 
     if (hasPendingContent) {
-      captureSegment(state, captureStart, captureEnd, false);
-      writeFoldedLines(state, state.line - _line);
-      captureStart = captureEnd = state.position;
-      hasPendingContent = false;
+      captureSegment(state, captureStart, captureEnd, false)
+      writeFoldedLines(state, state.line - _line)
+      captureStart = captureEnd = state.position
+      hasPendingContent = false
     }
 
-    if (!is_WHITE_SPACE(ch)) {
-      captureEnd = state.position + 1;
+    if (!isWhiteSpace(ch)) {
+      captureEnd = state.position + 1
     }
 
-    ch = state.input.charCodeAt(++state.position);
+    ch = state.input.charCodeAt(++state.position)
   }
 
-  captureSegment(state, captureStart, captureEnd, false);
+  captureSegment(state, captureStart, captureEnd, false)
 
   if (state.result) {
-    return true;
+    return true
   }
 
-  state.kind = _kind;
-  state.result = _result;
-  return false;
+  state.kind = _kind
+  state.result = _result
+  return false
 }
 
-function readSingleQuotedScalar(state, nodeIndent) {
-  var ch,
-      captureStart, captureEnd;
+function readSingleQuotedScalar (state, nodeIndent) {
+  let captureStart
+  let captureEnd
 
-  ch = state.input.charCodeAt(state.position);
+  let ch = state.input.charCodeAt(state.position)
 
   if (ch !== 0x27/* ' */) {
-    return false;
+    return false
   }
 
-  state.kind = 'scalar';
-  state.result = '';
-  state.position++;
-  captureStart = captureEnd = state.position;
+  state.kind = 'scalar'
+  state.result = ''
+  state.position++
+  captureStart = captureEnd = state.position
 
   while ((ch = state.input.charCodeAt(state.position)) !== 0) {
     if (ch === 0x27/* ' */) {
-      captureSegment(state, captureStart, state.position, true);
-      ch = state.input.charCodeAt(++state.position);
+      captureSegment(state, captureStart, state.position, true)
+      ch = state.input.charCodeAt(++state.position)
 
       if (ch === 0x27/* ' */) {
-        captureStart = state.position;
-        state.position++;
-        captureEnd = state.position;
+        captureStart = state.position
+        state.position++
+        captureEnd = state.position
       } else {
-        return true;
+        return true
       }
-
-    } else if (is_EOL(ch)) {
-      captureSegment(state, captureStart, captureEnd, true);
-      writeFoldedLines(state, skipSeparationSpace(state, false, nodeIndent));
-      captureStart = captureEnd = state.position;
-
+    } else if (isEol(ch)) {
+      captureSegment(state, captureStart, captureEnd, true)
+      writeFoldedLines(state, skipSeparationSpace(state, false, nodeIndent))
+      captureStart = captureEnd = state.position
     } else if (state.position === state.lineStart && testDocumentSeparator(state)) {
-      throwError(state, 'unexpected end of the document within a single quoted scalar');
-
+      throwError(state, 'unexpected end of the document within a single quoted scalar')
     } else {
-      state.position++;
-      captureEnd = state.position;
+      state.position++
+      if (!isWhiteSpace(ch)) {
+        captureEnd = state.position
+      }
     }
   }
 
-  throwError(state, 'unexpected end of the stream within a single quoted scalar');
+  throwError(state, 'unexpected end of the stream within a single quoted scalar')
 }
 
-function readDoubleQuotedScalar(state, nodeIndent) {
-  var captureStart,
-      captureEnd,
-      hexLength,
-      hexResult,
-      tmp,
-      ch;
+function readDoubleQuotedScalar (state, nodeIndent) {
+  let captureStart
+  let captureEnd
+  let tmp
 
-  ch = state.input.charCodeAt(state.position);
+  let ch = state.input.charCodeAt(state.position)
 
   if (ch !== 0x22/* " */) {
-    return false;
+    return false
   }
 
-  state.kind = 'scalar';
-  state.result = '';
-  state.position++;
-  captureStart = captureEnd = state.position;
+  state.kind = 'scalar'
+  state.result = ''
+  state.position++
+  captureStart = captureEnd = state.position
 
   while ((ch = state.input.charCodeAt(state.position)) !== 0) {
     if (ch === 0x22/* " */) {
-      captureSegment(state, captureStart, state.position, true);
-      state.position++;
-      return true;
-
+      captureSegment(state, captureStart, state.position, true)
+      state.position++
+      return true
     } else if (ch === 0x5C/* \ */) {
-      captureSegment(state, captureStart, state.position, true);
-      ch = state.input.charCodeAt(++state.position);
+      captureSegment(state, captureStart, state.position, true)
+      ch = state.input.charCodeAt(++state.position)
 
-      if (is_EOL(ch)) {
-        skipSeparationSpace(state, false, nodeIndent);
+      if (isEol(ch)) {
+        skipSeparationSpace(state, false, nodeIndent)
 
         // TODO: rework to inline fn with no type cast?
       } else if (ch < 256 && simpleEscapeCheck[ch]) {
-        state.result += simpleEscapeMap[ch];
-        state.position++;
-
+        state.result += simpleEscapeMap[ch]
+        state.position++
       } else if ((tmp = escapedHexLen(ch)) > 0) {
-        hexLength = tmp;
-        hexResult = 0;
+        let hexLength = tmp
+        let hexResult = 0
 
         for (; hexLength > 0; hexLength--) {
-          ch = state.input.charCodeAt(++state.position);
+          ch = state.input.charCodeAt(++state.position)
 
           if ((tmp = fromHexCode(ch)) >= 0) {
-            hexResult = (hexResult << 4) + tmp;
-
+            hexResult = (hexResult << 4) + tmp
           } else {
-            throwError(state, 'expected hexadecimal character');
+            throwError(state, 'expected hexadecimal character')
           }
         }
 
-        state.result += charFromCodepoint(hexResult);
+        state.result += charFromCodepoint(hexResult)
 
-        state.position++;
-
+        state.position++
       } else {
-        throwError(state, 'unknown escape sequence');
+        throwError(state, 'unknown escape sequence')
       }
 
-      captureStart = captureEnd = state.position;
-
-    } else if (is_EOL(ch)) {
-      captureSegment(state, captureStart, captureEnd, true);
-      writeFoldedLines(state, skipSeparationSpace(state, false, nodeIndent));
-      captureStart = captureEnd = state.position;
-
+      captureStart = captureEnd = state.position
+    } else if (isEol(ch)) {
+      captureSegment(state, captureStart, captureEnd, true)
+      writeFoldedLines(state, skipSeparationSpace(state, false, nodeIndent))
+      captureStart = captureEnd = state.position
     } else if (state.position === state.lineStart && testDocumentSeparator(state)) {
-      throwError(state, 'unexpected end of the document within a double quoted scalar');
-
+      throwError(state, 'unexpected end of the document within a double quoted scalar')
     } else {
-      state.position++;
-      captureEnd = state.position;
+      state.position++
+      if (!isWhiteSpace(ch)) {
+        captureEnd = state.position
+      }
     }
   }
 
-  throwError(state, 'unexpected end of the stream within a double quoted scalar');
+  throwError(state, 'unexpected end of the stream within a double quoted scalar')
 }
 
-function readFlowCollection(state, nodeIndent) {
-  var readNext = true,
-      _line,
-      _lineStart,
-      _pos,
-      _tag     = state.tag,
-      _result,
-      _anchor  = state.anchor,
-      following,
-      terminator,
-      isPair,
-      isExplicitPair,
-      isMapping,
-      overridableKeys = Object.create(null),
-      keyNode,
-      keyTag,
-      valueNode,
-      ch;
+function readFlowCollection (state, nodeIndent) {
+  let readNext = true
+  let _line
+  let _lineStart
+  let _pos
+  const _tag = state.tag
+  let _result
+  const _anchor = state.anchor
+  let terminator
+  let isPair
+  let isExplicitPair
+  let isMapping
+  const overridableKeys = Object.create(null)
+  let keyNode
+  let keyTag
+  let valueNode
 
-  ch = state.input.charCodeAt(state.position);
+  let ch = state.input.charCodeAt(state.position)
 
   if (ch === 0x5B/* [ */) {
-    terminator = 0x5D;/* ] */
-    isMapping = false;
-    _result = [];
+    terminator = 0x5D/* ] */
+    isMapping = false
+    _result = []
   } else if (ch === 0x7B/* { */) {
-    terminator = 0x7D;/* } */
-    isMapping = true;
-    _result = {};
+    terminator = 0x7D/* } */
+    isMapping = true
+    _result = {}
   } else {
-    return false;
+    return false
   }
 
   if (state.anchor !== null) {
-    state.anchorMap[state.anchor] = _result;
+    storeAnchor(state, state.anchor, _result)
   }
 
-  ch = state.input.charCodeAt(++state.position);
+  ch = state.input.charCodeAt(++state.position)
 
   while (ch !== 0) {
-    skipSeparationSpace(state, true, nodeIndent);
+    skipSeparationSpace(state, true, nodeIndent)
 
-    ch = state.input.charCodeAt(state.position);
+    ch = state.input.charCodeAt(state.position)
 
     if (ch === terminator) {
-      state.position++;
-      state.tag = _tag;
-      state.anchor = _anchor;
-      state.kind = isMapping ? 'mapping' : 'sequence';
-      state.result = _result;
-      return true;
+      state.position++
+      state.tag = _tag
+      state.anchor = _anchor
+      state.kind = isMapping ? 'mapping' : 'sequence'
+      state.result = _result
+      return true
     } else if (!readNext) {
-      throwError(state, 'missed comma between flow collection entries');
+      throwError(state, 'missed comma between flow collection entries')
     } else if (ch === 0x2C/* , */) {
       // "flow collection entries can never be completely empty", as per YAML 1.2, section 7.4
-      throwError(state, "expected the node content, but found ','");
+      throwError(state, "expected the node content, but found ','")
     }
 
-    keyTag = keyNode = valueNode = null;
-    isPair = isExplicitPair = false;
+    keyTag = keyNode = valueNode = null
+    isPair = isExplicitPair = false
 
     if (ch === 0x3F/* ? */) {
-      following = state.input.charCodeAt(state.position + 1);
+      const following = state.input.charCodeAt(state.position + 1)
 
-      if (is_WS_OR_EOL(following)) {
-        isPair = isExplicitPair = true;
-        state.position++;
-        skipSeparationSpace(state, true, nodeIndent);
+      if (isWsOrEol(following)) {
+        isPair = isExplicitPair = true
+        state.position++
+        skipSeparationSpace(state, true, nodeIndent)
       }
     }
 
-    _line = state.line; // Save the current line.
-    _lineStart = state.lineStart;
-    _pos = state.position;
-    composeNode(state, nodeIndent, CONTEXT_FLOW_IN, false, true);
-    keyTag = state.tag;
-    keyNode = state.result;
-    skipSeparationSpace(state, true, nodeIndent);
+    _line = state.line // Save the current line.
+    _lineStart = state.lineStart
+    _pos = state.position
+    composeNode(state, nodeIndent, CONTEXT_FLOW_IN, false, true)
+    keyTag = state.tag
+    keyNode = state.result
+    skipSeparationSpace(state, true, nodeIndent)
 
-    ch = state.input.charCodeAt(state.position);
+    ch = state.input.charCodeAt(state.position)
 
     if ((isExplicitPair || state.line === _line) && ch === 0x3A/* : */) {
-      isPair = true;
-      ch = state.input.charCodeAt(++state.position);
-      skipSeparationSpace(state, true, nodeIndent);
-      composeNode(state, nodeIndent, CONTEXT_FLOW_IN, false, true);
-      valueNode = state.result;
+      isPair = true
+      ch = state.input.charCodeAt(++state.position)
+      skipSeparationSpace(state, true, nodeIndent)
+      composeNode(state, nodeIndent, CONTEXT_FLOW_IN, false, true)
+      valueNode = state.result
     }
 
     if (isMapping) {
-      storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, valueNode, _line, _lineStart, _pos);
+      storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, valueNode, _line, _lineStart, _pos)
     } else if (isPair) {
-      _result.push(storeMappingPair(state, null, overridableKeys, keyTag, keyNode, valueNode, _line, _lineStart, _pos));
+      _result.push(storeMappingPair(state, null, overridableKeys, keyTag, keyNode, valueNode, _line, _lineStart, _pos))
     } else {
-      _result.push(keyNode);
+      _result.push(keyNode)
     }
 
-    skipSeparationSpace(state, true, nodeIndent);
+    skipSeparationSpace(state, true, nodeIndent)
 
-    ch = state.input.charCodeAt(state.position);
+    ch = state.input.charCodeAt(state.position)
 
     if (ch === 0x2C/* , */) {
-      readNext = true;
-      ch = state.input.charCodeAt(++state.position);
+      readNext = true
+      ch = state.input.charCodeAt(++state.position)
     } else {
-      readNext = false;
+      readNext = false
     }
   }
 
-  throwError(state, 'unexpected end of the stream within a flow collection');
+  throwError(state, 'unexpected end of the stream within a flow collection')
 }
 
-function readBlockScalar(state, nodeIndent) {
-  var captureStart,
-      folding,
-      chomping       = CHOMPING_CLIP,
-      didReadContent = false,
-      detectedIndent = false,
-      textIndent     = nodeIndent,
-      emptyLines     = 0,
-      atMoreIndented = false,
-      tmp,
-      ch;
+function readBlockScalar (state, nodeIndent) {
+  let folding
+  let chomping = CHOMPING_CLIP
+  let didReadContent = false
+  let detectedIndent = false
+  let textIndent = nodeIndent
+  let emptyLines = 0
+  let atMoreIndented = false
+  let tmp
 
-  ch = state.input.charCodeAt(state.position);
+  let ch = state.input.charCodeAt(state.position)
 
   if (ch === 0x7C/* | */) {
-    folding = false;
+    folding = false
   } else if (ch === 0x3E/* > */) {
-    folding = true;
+    folding = true
   } else {
-    return false;
+    return false
   }
 
-  state.kind = 'scalar';
-  state.result = '';
+  state.kind = 'scalar'
+  state.result = ''
 
   while (ch !== 0) {
-    ch = state.input.charCodeAt(++state.position);
+    ch = state.input.charCodeAt(++state.position)
 
     if (ch === 0x2B/* + */ || ch === 0x2D/* - */) {
       if (CHOMPING_CLIP === chomping) {
-        chomping = (ch === 0x2B/* + */) ? CHOMPING_KEEP : CHOMPING_STRIP;
+        chomping = (ch === 0x2B/* + */) ? CHOMPING_KEEP : CHOMPING_STRIP
       } else {
-        throwError(state, 'repeat of a chomping mode identifier');
+        throwError(state, 'repeat of a chomping mode identifier')
       }
-
     } else if ((tmp = fromDecimalCode(ch)) >= 0) {
       if (tmp === 0) {
-        throwError(state, 'bad explicit indentation width of a block scalar; it cannot be less than one');
+        throwError(state, 'bad explicit indentation width of a block scalar; it cannot be less than one')
       } else if (!detectedIndent) {
-        textIndent = nodeIndent + tmp - 1;
-        detectedIndent = true;
+        textIndent = nodeIndent + tmp - 1
+        detectedIndent = true
       } else {
-        throwError(state, 'repeat of an indentation width identifier');
+        throwError(state, 'repeat of an indentation width identifier')
       }
-
     } else {
-      break;
+      break
     }
   }
 
-  if (is_WHITE_SPACE(ch)) {
-    do { ch = state.input.charCodeAt(++state.position); }
-    while (is_WHITE_SPACE(ch));
+  if (isWhiteSpace(ch)) {
+    do { ch = state.input.charCodeAt(++state.position) }
+    while (isWhiteSpace(ch))
 
     if (ch === 0x23/* # */) {
-      do { ch = state.input.charCodeAt(++state.position); }
-      while (!is_EOL(ch) && (ch !== 0));
+      do { ch = state.input.charCodeAt(++state.position) }
+      while (!isEol(ch) && (ch !== 0))
     }
   }
 
   while (ch !== 0) {
-    readLineBreak(state);
-    state.lineIndent = 0;
+    readLineBreak(state)
+    state.lineIndent = 0
 
-    ch = state.input.charCodeAt(state.position);
+    ch = state.input.charCodeAt(state.position)
 
+    // eslint-disable-next-line no-unmodified-loop-condition
     while ((!detectedIndent || state.lineIndent < textIndent) &&
            (ch === 0x20/* Space */)) {
-      state.lineIndent++;
-      ch = state.input.charCodeAt(++state.position);
+      state.lineIndent++
+      ch = state.input.charCodeAt(++state.position)
     }
 
     if (!detectedIndent && state.lineIndent > textIndent) {
-      textIndent = state.lineIndent;
+      textIndent = state.lineIndent
     }
 
-    if (is_EOL(ch)) {
-      emptyLines++;
-      continue;
+    if (isEol(ch)) {
+      emptyLines++
+      continue
+    }
+
+    if (!detectedIndent && textIndent === 0) {
+      throwError(state, 'missing indentation for block scalar')
     }
 
     // End of the scalar.
     if (state.lineIndent < textIndent) {
-
       // Perform the chomping.
       if (chomping === CHOMPING_KEEP) {
-        state.result += common.repeat('\n', didReadContent ? 1 + emptyLines : emptyLines);
+        state.result += common.repeat('\n', didReadContent ? 1 + emptyLines : emptyLines)
       } else if (chomping === CHOMPING_CLIP) {
         if (didReadContent) { // i.e. only if the scalar is not empty.
-          state.result += '\n';
+          state.result += '\n'
         }
       }
 
       // Break this `while` cycle and go to the funciton's epilogue.
-      break;
+      break
     }
 
     // Folded style: use fancy rules to handle line breaks.
     if (folding) {
-
       // Lines starting with white space characters (more-indented lines) are not folded.
-      if (is_WHITE_SPACE(ch)) {
-        atMoreIndented = true;
+      if (isWhiteSpace(ch)) {
+        atMoreIndented = true
         // except for the first content line (cf. Example 8.1)
-        state.result += common.repeat('\n', didReadContent ? 1 + emptyLines : emptyLines);
+        state.result += common.repeat('\n', didReadContent ? 1 + emptyLines : emptyLines)
 
       // End of more-indented block.
       } else if (atMoreIndented) {
-        atMoreIndented = false;
-        state.result += common.repeat('\n', emptyLines + 1);
+        atMoreIndented = false
+        state.result += common.repeat('\n', emptyLines + 1)
 
       // Just one line break - perceive as the same line.
       } else if (emptyLines === 0) {
         if (didReadContent) { // i.e. only if we have already read some scalar content.
-          state.result += ' ';
+          state.result += ' '
         }
 
       // Several line breaks - perceive as different lines.
       } else {
-        state.result += common.repeat('\n', emptyLines);
+        state.result += common.repeat('\n', emptyLines)
       }
 
     // Literal style: just add exact number of line breaks between content lines.
     } else {
       // Keep all line breaks except the header line break.
-      state.result += common.repeat('\n', didReadContent ? 1 + emptyLines : emptyLines);
+      state.result += common.repeat('\n', didReadContent ? 1 + emptyLines : emptyLines)
     }
 
-    didReadContent = true;
-    detectedIndent = true;
-    emptyLines = 0;
-    captureStart = state.position;
+    didReadContent = true
+    detectedIndent = true
+    emptyLines = 0
+    const captureStart = state.position
 
-    while (!is_EOL(ch) && (ch !== 0)) {
-      ch = state.input.charCodeAt(++state.position);
+    while (!isEol(ch) && (ch !== 0)) {
+      ch = state.input.charCodeAt(++state.position)
     }
 
-    captureSegment(state, captureStart, state.position, false);
+    captureSegment(state, captureStart, state.position, false)
   }
 
-  return true;
+  return true
 }
 
-function readBlockSequence(state, nodeIndent) {
-  var _line,
-      _tag      = state.tag,
-      _anchor   = state.anchor,
-      _result   = [],
-      following,
-      detected  = false,
-      ch;
+function readBlockSequence (state, nodeIndent) {
+  const _tag = state.tag
+  const _anchor = state.anchor
+  const _result = []
+  let detected = false
 
   // there is a leading tab before this token, so it can't be a block sequence/mapping;
   // it can still be flow sequence/mapping or a scalar
-  if (state.firstTabInLine !== -1) return false;
+  if (state.firstTabInLine !== -1) return false
 
   if (state.anchor !== null) {
-    state.anchorMap[state.anchor] = _result;
+    storeAnchor(state, state.anchor, _result)
   }
 
-  ch = state.input.charCodeAt(state.position);
+  let ch = state.input.charCodeAt(state.position)
 
   while (ch !== 0) {
     if (state.firstTabInLine !== -1) {
-      state.position = state.firstTabInLine;
-      throwError(state, 'tab characters must not be used in indentation');
+      state.position = state.firstTabInLine
+      throwError(state, 'tab characters must not be used in indentation')
     }
 
     if (ch !== 0x2D/* - */) {
-      break;
+      break
     }
 
-    following = state.input.charCodeAt(state.position + 1);
+    const following = state.input.charCodeAt(state.position + 1)
 
-    if (!is_WS_OR_EOL(following)) {
-      break;
+    if (!isWsOrEol(following)) {
+      break
     }
 
-    detected = true;
-    state.position++;
+    detected = true
+    state.position++
 
     if (skipSeparationSpace(state, true, -1)) {
       if (state.lineIndent <= nodeIndent) {
-        _result.push(null);
-        ch = state.input.charCodeAt(state.position);
-        continue;
+        _result.push(null)
+        ch = state.input.charCodeAt(state.position)
+        continue
       }
     }
 
-    _line = state.line;
-    composeNode(state, nodeIndent, CONTEXT_BLOCK_IN, false, true);
-    _result.push(state.result);
-    skipSeparationSpace(state, true, -1);
+    const _line = state.line
+    composeNode(state, nodeIndent, CONTEXT_BLOCK_IN, false, true)
+    _result.push(state.result)
+    skipSeparationSpace(state, true, -1)
 
-    ch = state.input.charCodeAt(state.position);
+    ch = state.input.charCodeAt(state.position)
 
     if ((state.line === _line || state.lineIndent > nodeIndent) && (ch !== 0)) {
-      throwError(state, 'bad indentation of a sequence entry');
+      throwError(state, 'bad indentation of a sequence entry')
     } else if (state.lineIndent < nodeIndent) {
-      break;
+      break
     }
   }
 
   if (detected) {
-    state.tag = _tag;
-    state.anchor = _anchor;
-    state.kind = 'sequence';
-    state.result = _result;
-    return true;
+    state.tag = _tag
+    state.anchor = _anchor
+    state.kind = 'sequence'
+    state.result = _result
+    return true
   }
-  return false;
+  return false
 }
 
-function readBlockMapping(state, nodeIndent, flowIndent) {
-  var following,
-      allowCompact,
-      _line,
-      _keyLine,
-      _keyLineStart,
-      _keyPos,
-      _tag          = state.tag,
-      _anchor       = state.anchor,
-      _result       = {},
-      overridableKeys = Object.create(null),
-      keyTag        = null,
-      keyNode       = null,
-      valueNode     = null,
-      atExplicitKey = false,
-      detected      = false,
-      ch;
+function readBlockMapping (state, nodeIndent, flowIndent) {
+  let allowCompact
+  let _keyLine
+  let _keyLineStart
+  let _keyPos
+  const _tag = state.tag
+  const _anchor = state.anchor
+  const _result = {}
+  const overridableKeys = Object.create(null)
+  let keyTag = null
+  let keyNode = null
+  let valueNode = null
+  let atExplicitKey = false
+  let detected = false
 
   // there is a leading tab before this token, so it can't be a block sequence/mapping;
   // it can still be flow sequence/mapping or a scalar
-  if (state.firstTabInLine !== -1) return false;
+  if (state.firstTabInLine !== -1) return false
 
   if (state.anchor !== null) {
-    state.anchorMap[state.anchor] = _result;
+    storeAnchor(state, state.anchor, _result)
   }
 
-  ch = state.input.charCodeAt(state.position);
+  let ch = state.input.charCodeAt(state.position)
 
   while (ch !== 0) {
     if (!atExplicitKey && state.firstTabInLine !== -1) {
-      state.position = state.firstTabInLine;
-      throwError(state, 'tab characters must not be used in indentation');
+      state.position = state.firstTabInLine
+      throwError(state, 'tab characters must not be used in indentation')
     }
 
-    following = state.input.charCodeAt(state.position + 1);
-    _line = state.line; // Save the current line.
+    const following = state.input.charCodeAt(state.position + 1)
+    const _line = state.line // Save the current line.
 
     //
     // Explicit notation case. There are two separate blocks:
     // first for the key (denoted by "?") and second for the value (denoted by ":")
     //
-    if ((ch === 0x3F/* ? */ || ch === 0x3A/* : */) && is_WS_OR_EOL(following)) {
-
+    if ((ch === 0x3F/* ? */ || ch === 0x3A/* : */) && isWsOrEol(following)) {
       if (ch === 0x3F/* ? */) {
         if (atExplicitKey) {
-          storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, null, _keyLine, _keyLineStart, _keyPos);
-          keyTag = keyNode = valueNode = null;
+          storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, null, _keyLine, _keyLineStart, _keyPos)
+          keyTag = keyNode = valueNode = null
         }
 
-        detected = true;
-        atExplicitKey = true;
-        allowCompact = true;
-
+        detected = true
+        atExplicitKey = true
+        allowCompact = true
       } else if (atExplicitKey) {
         // i.e. 0x3A/* : */ === character after the explicit key.
-        atExplicitKey = false;
-        allowCompact = true;
-
+        atExplicitKey = false
+        allowCompact = true
       } else {
-        throwError(state, 'incomplete explicit mapping pair; a key node is missed; or followed by a non-tabulated empty line');
+        throwError(state, 'incomplete explicit mapping pair; a key node is missed; or followed by a non-tabulated empty line')
       }
 
-      state.position += 1;
-      ch = following;
+      state.position += 1
+      ch = following
 
     //
     // Implicit notation case. Flow-style node as the key first, then ":", and the value.
     //
     } else {
-      _keyLine = state.line;
-      _keyLineStart = state.lineStart;
-      _keyPos = state.position;
+      _keyLine = state.line
+      _keyLineStart = state.lineStart
+      _keyPos = state.position
 
       if (!composeNode(state, flowIndent, CONTEXT_FLOW_OUT, false, true)) {
         // Neither implicit nor explicit notation.
         // Reading is done. Go to the epilogue.
-        break;
+        break
       }
 
       if (state.line === _line) {
-        ch = state.input.charCodeAt(state.position);
+        ch = state.input.charCodeAt(state.position)
 
-        while (is_WHITE_SPACE(ch)) {
-          ch = state.input.charCodeAt(++state.position);
+        while (isWhiteSpace(ch)) {
+          ch = state.input.charCodeAt(++state.position)
         }
 
         if (ch === 0x3A/* : */) {
-          ch = state.input.charCodeAt(++state.position);
+          ch = state.input.charCodeAt(++state.position)
 
-          if (!is_WS_OR_EOL(ch)) {
-            throwError(state, 'a whitespace character is expected after the key-value separator within a block mapping');
+          if (!isWsOrEol(ch)) {
+            throwError(state, 'a whitespace character is expected after the key-value separator within a block mapping')
           }
 
           if (atExplicitKey) {
-            storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, null, _keyLine, _keyLineStart, _keyPos);
-            keyTag = keyNode = valueNode = null;
+            storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, null, _keyLine, _keyLineStart, _keyPos)
+            keyTag = keyNode = valueNode = null
           }
 
-          detected = true;
-          atExplicitKey = false;
-          allowCompact = false;
-          keyTag = state.tag;
-          keyNode = state.result;
-
+          detected = true
+          atExplicitKey = false
+          allowCompact = false
+          keyTag = state.tag
+          keyNode = state.result
         } else if (detected) {
-          throwError(state, 'can not read an implicit mapping pair; a colon is missed');
-
+          throwError(state, 'can not read an implicit mapping pair; a colon is missed')
         } else {
-          state.tag = _tag;
-          state.anchor = _anchor;
-          return true; // Keep the result of `composeNode`.
+          state.tag = _tag
+          state.anchor = _anchor
+          return true // Keep the result of `composeNode`.
         }
-
       } else if (detected) {
-        throwError(state, 'can not read a block mapping entry; a multiline key may not be an implicit key');
-
+        throwError(state, 'can not read a block mapping entry; a multiline key may not be an implicit key')
       } else {
-        state.tag = _tag;
-        state.anchor = _anchor;
-        return true; // Keep the result of `composeNode`.
+        state.tag = _tag
+        state.anchor = _anchor
+        return true // Keep the result of `composeNode`.
       }
     }
 
@@ -45855,32 +42466,32 @@ function readBlockMapping(state, nodeIndent, flowIndent) {
     //
     if (state.line === _line || state.lineIndent > nodeIndent) {
       if (atExplicitKey) {
-        _keyLine = state.line;
-        _keyLineStart = state.lineStart;
-        _keyPos = state.position;
+        _keyLine = state.line
+        _keyLineStart = state.lineStart
+        _keyPos = state.position
       }
 
       if (composeNode(state, nodeIndent, CONTEXT_BLOCK_OUT, true, allowCompact)) {
         if (atExplicitKey) {
-          keyNode = state.result;
+          keyNode = state.result
         } else {
-          valueNode = state.result;
+          valueNode = state.result
         }
       }
 
       if (!atExplicitKey) {
-        storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, valueNode, _keyLine, _keyLineStart, _keyPos);
-        keyTag = keyNode = valueNode = null;
+        storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, valueNode, _keyLine, _keyLineStart, _keyPos)
+        keyTag = keyNode = valueNode = null
       }
 
-      skipSeparationSpace(state, true, -1);
-      ch = state.input.charCodeAt(state.position);
+      skipSeparationSpace(state, true, -1)
+      ch = state.input.charCodeAt(state.position)
     }
 
     if ((state.line === _line || state.lineIndent > nodeIndent) && (ch !== 0)) {
-      throwError(state, 'bad indentation of a mapping entry');
+      throwError(state, 'bad indentation of a mapping entry')
     } else if (state.lineIndent < nodeIndent) {
-      break;
+      break
     }
   }
 
@@ -45890,293 +42501,330 @@ function readBlockMapping(state, nodeIndent, flowIndent) {
 
   // Special case: last mapping's node contains only the key in explicit notation.
   if (atExplicitKey) {
-    storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, null, _keyLine, _keyLineStart, _keyPos);
+    storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, null, _keyLine, _keyLineStart, _keyPos)
   }
 
   // Expose the resulting mapping.
   if (detected) {
-    state.tag = _tag;
-    state.anchor = _anchor;
-    state.kind = 'mapping';
-    state.result = _result;
+    state.tag = _tag
+    state.anchor = _anchor
+    state.kind = 'mapping'
+    state.result = _result
   }
 
-  return detected;
+  return detected
 }
 
-function readTagProperty(state) {
-  var _position,
-      isVerbatim = false,
-      isNamed    = false,
-      tagHandle,
-      tagName,
-      ch;
+function readTagProperty (state) {
+  let isVerbatim = false
+  let isNamed = false
+  let tagHandle
+  let tagName
 
-  ch = state.input.charCodeAt(state.position);
+  let ch = state.input.charCodeAt(state.position)
 
-  if (ch !== 0x21/* ! */) return false;
+  if (ch !== 0x21/* ! */) return false
 
   if (state.tag !== null) {
-    throwError(state, 'duplication of a tag property');
+    throwError(state, 'duplication of a tag property')
   }
 
-  ch = state.input.charCodeAt(++state.position);
+  ch = state.input.charCodeAt(++state.position)
 
   if (ch === 0x3C/* < */) {
-    isVerbatim = true;
-    ch = state.input.charCodeAt(++state.position);
-
+    isVerbatim = true
+    ch = state.input.charCodeAt(++state.position)
   } else if (ch === 0x21/* ! */) {
-    isNamed = true;
-    tagHandle = '!!';
-    ch = state.input.charCodeAt(++state.position);
-
+    isNamed = true
+    tagHandle = '!!'
+    ch = state.input.charCodeAt(++state.position)
   } else {
-    tagHandle = '!';
+    tagHandle = '!'
   }
 
-  _position = state.position;
+  let _position = state.position
 
   if (isVerbatim) {
-    do { ch = state.input.charCodeAt(++state.position); }
-    while (ch !== 0 && ch !== 0x3E/* > */);
+    do { ch = state.input.charCodeAt(++state.position) }
+    while (ch !== 0 && ch !== 0x3E/* > */)
 
     if (state.position < state.length) {
-      tagName = state.input.slice(_position, state.position);
-      ch = state.input.charCodeAt(++state.position);
+      tagName = state.input.slice(_position, state.position)
+      ch = state.input.charCodeAt(++state.position)
     } else {
-      throwError(state, 'unexpected end of the stream within a verbatim tag');
+      throwError(state, 'unexpected end of the stream within a verbatim tag')
     }
   } else {
-    while (ch !== 0 && !is_WS_OR_EOL(ch)) {
-
+    while (ch !== 0 && !isWsOrEol(ch)) {
       if (ch === 0x21/* ! */) {
         if (!isNamed) {
-          tagHandle = state.input.slice(_position - 1, state.position + 1);
+          tagHandle = state.input.slice(_position - 1, state.position + 1)
 
           if (!PATTERN_TAG_HANDLE.test(tagHandle)) {
-            throwError(state, 'named tag handle cannot contain such characters');
+            throwError(state, 'named tag handle cannot contain such characters')
           }
 
-          isNamed = true;
-          _position = state.position + 1;
+          isNamed = true
+          _position = state.position + 1
         } else {
-          throwError(state, 'tag suffix cannot contain exclamation marks');
+          throwError(state, 'tag suffix cannot contain exclamation marks')
         }
       }
 
-      ch = state.input.charCodeAt(++state.position);
+      ch = state.input.charCodeAt(++state.position)
     }
 
-    tagName = state.input.slice(_position, state.position);
+    tagName = state.input.slice(_position, state.position)
 
     if (PATTERN_FLOW_INDICATORS.test(tagName)) {
-      throwError(state, 'tag suffix cannot contain flow indicator characters');
+      throwError(state, 'tag suffix cannot contain flow indicator characters')
     }
   }
 
   if (tagName && !PATTERN_TAG_URI.test(tagName)) {
-    throwError(state, 'tag name cannot contain such characters: ' + tagName);
+    throwError(state, 'tag name cannot contain such characters: ' + tagName)
   }
 
   try {
-    tagName = decodeURIComponent(tagName);
+    tagName = decodeURIComponent(tagName)
   } catch (err) {
-    throwError(state, 'tag name is malformed: ' + tagName);
+    throwError(state, 'tag name is malformed: ' + tagName)
   }
 
   if (isVerbatim) {
-    state.tag = tagName;
-
+    state.tag = tagName
   } else if (_hasOwnProperty.call(state.tagMap, tagHandle)) {
-    state.tag = state.tagMap[tagHandle] + tagName;
-
+    state.tag = state.tagMap[tagHandle] + tagName
   } else if (tagHandle === '!') {
-    state.tag = '!' + tagName;
-
+    state.tag = '!' + tagName
   } else if (tagHandle === '!!') {
-    state.tag = 'tag:yaml.org,2002:' + tagName;
-
+    state.tag = 'tag:yaml.org,2002:' + tagName
   } else {
-    throwError(state, 'undeclared tag handle "' + tagHandle + '"');
+    throwError(state, 'undeclared tag handle "' + tagHandle + '"')
   }
 
-  return true;
+  return true
 }
 
-function readAnchorProperty(state) {
-  var _position,
-      ch;
+function readAnchorProperty (state) {
+  let ch = state.input.charCodeAt(state.position)
 
-  ch = state.input.charCodeAt(state.position);
-
-  if (ch !== 0x26/* & */) return false;
+  if (ch !== 0x26/* & */) return false
 
   if (state.anchor !== null) {
-    throwError(state, 'duplication of an anchor property');
+    throwError(state, 'duplication of an anchor property')
   }
 
-  ch = state.input.charCodeAt(++state.position);
-  _position = state.position;
+  ch = state.input.charCodeAt(++state.position)
+  const _position = state.position
 
-  while (ch !== 0 && !is_WS_OR_EOL(ch) && !is_FLOW_INDICATOR(ch)) {
-    ch = state.input.charCodeAt(++state.position);
+  while (ch !== 0 && !isWsOrEol(ch) && !isFlowIndicator(ch)) {
+    ch = state.input.charCodeAt(++state.position)
   }
 
   if (state.position === _position) {
-    throwError(state, 'name of an anchor node must contain at least one character');
+    throwError(state, 'name of an anchor node must contain at least one character')
   }
 
-  state.anchor = state.input.slice(_position, state.position);
-  return true;
+  state.anchor = state.input.slice(_position, state.position)
+  return true
 }
 
-function readAlias(state) {
-  var _position, alias,
-      ch;
+function readAlias (state) {
+  let ch = state.input.charCodeAt(state.position)
 
-  ch = state.input.charCodeAt(state.position);
+  if (ch !== 0x2A/* * */) return false
 
-  if (ch !== 0x2A/* * */) return false;
+  ch = state.input.charCodeAt(++state.position)
+  const _position = state.position
 
-  ch = state.input.charCodeAt(++state.position);
-  _position = state.position;
-
-  while (ch !== 0 && !is_WS_OR_EOL(ch) && !is_FLOW_INDICATOR(ch)) {
-    ch = state.input.charCodeAt(++state.position);
+  while (ch !== 0 && !isWsOrEol(ch) && !isFlowIndicator(ch)) {
+    ch = state.input.charCodeAt(++state.position)
   }
 
   if (state.position === _position) {
-    throwError(state, 'name of an alias node must contain at least one character');
+    throwError(state, 'name of an alias node must contain at least one character')
   }
 
-  alias = state.input.slice(_position, state.position);
+  const alias = state.input.slice(_position, state.position)
 
   if (!_hasOwnProperty.call(state.anchorMap, alias)) {
-    throwError(state, 'unidentified alias "' + alias + '"');
+    throwError(state, 'unidentified alias "' + alias + '"')
   }
 
-  state.result = state.anchorMap[alias];
-  skipSeparationSpace(state, true, -1);
-  return true;
+  state.result = state.anchorMap[alias]
+  skipSeparationSpace(state, true, -1)
+  return true
 }
 
-function composeNode(state, parentIndent, nodeContext, allowToSeek, allowCompact) {
-  var allowBlockStyles,
-      allowBlockScalars,
-      allowBlockCollections,
-      indentStatus = 1, // 1: this>parent, 0: this=parent, -1: this<parent
-      atNewLine  = false,
-      hasContent = false,
-      typeIndex,
-      typeQuantity,
-      typeList,
-      type,
-      flowIndent,
-      blockIndent;
+function tryReadBlockMappingFromProperty (state, propertyStart, nodeIndent, flowIndent) {
+  const fallbackState = snapshotState(state)
 
-  if (state.listener !== null) {
-    state.listener('open', state);
+  beginAnchorTransaction(state)
+  restoreState(state, propertyStart)
+
+  // Re-read the leading properties as part of the first implicit key, not as
+  // properties of the current node.
+  state.tag = null
+  state.anchor = null
+  state.kind = null
+  state.result = null
+
+  if (readBlockMapping(state, nodeIndent, flowIndent) && state.kind === 'mapping') {
+    commitAnchorTransaction(state)
+    return true
   }
 
-  state.tag    = null;
-  state.anchor = null;
-  state.kind   = null;
-  state.result = null;
+  rollbackAnchorTransaction(state)
+  restoreState(state, fallbackState)
+  return false
+}
 
-  allowBlockStyles = allowBlockScalars = allowBlockCollections =
+function composeNode (state, parentIndent, nodeContext, allowToSeek, allowCompact) {
+  let allowBlockScalars
+  let allowBlockCollections
+  let indentStatus = 1 // 1: this>parent, 0: this=parent, -1: this<parent
+  let atNewLine = false
+  let hasContent = false
+  let propertyStart = null
+  let type
+  let flowIndent
+  let blockIndent
+
+  if (state.depth >= state.maxDepth) {
+    throwError(state, 'nesting exceeded maxDepth (' + state.maxDepth + ')')
+  }
+
+  state.depth += 1
+
+  if (state.listener !== null) {
+    state.listener('open', state)
+  }
+
+  state.tag = null
+  state.anchor = null
+  state.kind = null
+  state.result = null
+
+  const allowBlockStyles = allowBlockScalars = allowBlockCollections =
     CONTEXT_BLOCK_OUT === nodeContext ||
-    CONTEXT_BLOCK_IN  === nodeContext;
+    CONTEXT_BLOCK_IN === nodeContext
 
   if (allowToSeek) {
     if (skipSeparationSpace(state, true, -1)) {
-      atNewLine = true;
+      atNewLine = true
 
       if (state.lineIndent > parentIndent) {
-        indentStatus = 1;
+        indentStatus = 1
       } else if (state.lineIndent === parentIndent) {
-        indentStatus = 0;
+        indentStatus = 0
       } else if (state.lineIndent < parentIndent) {
-        indentStatus = -1;
+        indentStatus = -1
       }
     }
   }
 
   if (indentStatus === 1) {
-    while (readTagProperty(state) || readAnchorProperty(state)) {
+    while (true) {
+      const ch = state.input.charCodeAt(state.position)
+      const propertyState = snapshotState(state)
+
+      // A duplicate property token after a line break can be the first key of
+      // a nested block mapping, e.g. `!!map\n  !!str key: value`.
+      if (atNewLine &&
+          ((ch === 0x21/* ! */ && state.tag !== null) ||
+           (ch === 0x26/* & */ && state.anchor !== null))) {
+        break
+      }
+
+      if (!readTagProperty(state) && !readAnchorProperty(state)) {
+        break
+      }
+
+      if (propertyStart === null) {
+        propertyStart = propertyState
+      }
+
       if (skipSeparationSpace(state, true, -1)) {
-        atNewLine = true;
-        allowBlockCollections = allowBlockStyles;
+        atNewLine = true
+        allowBlockCollections = allowBlockStyles
 
         if (state.lineIndent > parentIndent) {
-          indentStatus = 1;
+          indentStatus = 1
         } else if (state.lineIndent === parentIndent) {
-          indentStatus = 0;
+          indentStatus = 0
         } else if (state.lineIndent < parentIndent) {
-          indentStatus = -1;
+          indentStatus = -1
         }
       } else {
-        allowBlockCollections = false;
+        allowBlockCollections = false
       }
     }
   }
 
   if (allowBlockCollections) {
-    allowBlockCollections = atNewLine || allowCompact;
+    allowBlockCollections = atNewLine || allowCompact
   }
 
   if (indentStatus === 1 || CONTEXT_BLOCK_OUT === nodeContext) {
     if (CONTEXT_FLOW_IN === nodeContext || CONTEXT_FLOW_OUT === nodeContext) {
-      flowIndent = parentIndent;
+      flowIndent = parentIndent
     } else {
-      flowIndent = parentIndent + 1;
+      flowIndent = parentIndent + 1
     }
 
-    blockIndent = state.position - state.lineStart;
+    blockIndent = state.position - state.lineStart
 
     if (indentStatus === 1) {
-      if (allowBlockCollections &&
-          (readBlockSequence(state, blockIndent) ||
-           readBlockMapping(state, blockIndent, flowIndent)) ||
+      if ((allowBlockCollections &&
+          (readBlockSequence(state, blockIndent) || readBlockMapping(state, blockIndent, flowIndent))) ||
           readFlowCollection(state, flowIndent)) {
-        hasContent = true;
+        hasContent = true
       } else {
-        if ((allowBlockScalars && readBlockScalar(state, flowIndent)) ||
+        const ch = state.input.charCodeAt(state.position)
+
+        if (propertyStart !== null && allowBlockStyles && !allowBlockCollections &&
+            ch !== 0x7C/* | */ && ch !== 0x3E/* > */ &&
+            tryReadBlockMappingFromProperty(
+              state,
+              propertyStart,
+              propertyStart.position - propertyStart.lineStart,
+              flowIndent
+            )) {
+          hasContent = true
+        } else if ((allowBlockScalars && readBlockScalar(state, flowIndent)) ||
             readSingleQuotedScalar(state, flowIndent) ||
             readDoubleQuotedScalar(state, flowIndent)) {
-          hasContent = true;
-
+          hasContent = true
         } else if (readAlias(state)) {
-          hasContent = true;
+          hasContent = true
 
           if (state.tag !== null || state.anchor !== null) {
-            throwError(state, 'alias node should not have any properties');
+            throwError(state, 'alias node should not have any properties')
           }
-
         } else if (readPlainScalar(state, flowIndent, CONTEXT_FLOW_IN === nodeContext)) {
-          hasContent = true;
+          hasContent = true
 
           if (state.tag === null) {
-            state.tag = '?';
+            state.tag = '?'
           }
         }
 
         if (state.anchor !== null) {
-          state.anchorMap[state.anchor] = state.result;
+          storeAnchor(state, state.anchor, state.result)
         }
       }
     } else if (indentStatus === 0) {
       // Special case: block sequences are allowed to have same indentation level as the parent.
       // http://www.yaml.org/spec/1.2/spec.html#id2799784
-      hasContent = allowBlockCollections && readBlockSequence(state, blockIndent);
+      hasContent = allowBlockCollections && readBlockSequence(state, blockIndent)
     }
   }
 
   if (state.tag === null) {
     if (state.anchor !== null) {
-      state.anchorMap[state.anchor] = state.result;
+      storeAnchor(state, state.anchor, state.result)
     }
-
   } else if (state.tag === '?') {
     // Implicit resolving is not allowed for non-scalar types, and '?'
     // non-specific tag is only automatically assigned to plain scalars.
@@ -46185,245 +42833,234 @@ function composeNode(state, parentIndent, nodeContext, allowToSeek, allowCompact
     // tag, for example like this: "!<?> [0]"
     //
     if (state.result !== null && state.kind !== 'scalar') {
-      throwError(state, 'unacceptable node kind for !<?> tag; it should be "scalar", not "' + state.kind + '"');
+      throwError(state, 'unacceptable node kind for !<?> tag; it should be "scalar", not "' + state.kind + '"')
     }
 
-    for (typeIndex = 0, typeQuantity = state.implicitTypes.length; typeIndex < typeQuantity; typeIndex += 1) {
-      type = state.implicitTypes[typeIndex];
+    for (let typeIndex = 0, typeQuantity = state.implicitTypes.length; typeIndex < typeQuantity; typeIndex += 1) {
+      type = state.implicitTypes[typeIndex]
 
       if (type.resolve(state.result)) { // `state.result` updated in resolver if matched
-        state.result = type.construct(state.result);
-        state.tag = type.tag;
+        state.result = type.construct(state.result)
+        state.tag = type.tag
         if (state.anchor !== null) {
-          state.anchorMap[state.anchor] = state.result;
+          storeAnchor(state, state.anchor, state.result)
         }
-        break;
+        break
       }
     }
   } else if (state.tag !== '!') {
     if (_hasOwnProperty.call(state.typeMap[state.kind || 'fallback'], state.tag)) {
-      type = state.typeMap[state.kind || 'fallback'][state.tag];
+      type = state.typeMap[state.kind || 'fallback'][state.tag]
     } else {
       // looking for multi type
-      type = null;
-      typeList = state.typeMap.multi[state.kind || 'fallback'];
+      type = null
+      const typeList = state.typeMap.multi[state.kind || 'fallback']
 
-      for (typeIndex = 0, typeQuantity = typeList.length; typeIndex < typeQuantity; typeIndex += 1) {
+      for (let typeIndex = 0, typeQuantity = typeList.length; typeIndex < typeQuantity; typeIndex += 1) {
         if (state.tag.slice(0, typeList[typeIndex].tag.length) === typeList[typeIndex].tag) {
-          type = typeList[typeIndex];
-          break;
+          type = typeList[typeIndex]
+          break
         }
       }
     }
 
     if (!type) {
-      throwError(state, 'unknown tag !<' + state.tag + '>');
+      throwError(state, 'unknown tag !<' + state.tag + '>')
     }
 
     if (state.result !== null && type.kind !== state.kind) {
-      throwError(state, 'unacceptable node kind for !<' + state.tag + '> tag; it should be "' + type.kind + '", not "' + state.kind + '"');
+      throwError(state, 'unacceptable node kind for !<' + state.tag + '> tag; it should be "' + type.kind + '", not "' + state.kind + '"')
     }
 
     if (!type.resolve(state.result, state.tag)) { // `state.result` updated in resolver if matched
-      throwError(state, 'cannot resolve a node with !<' + state.tag + '> explicit tag');
+      throwError(state, 'cannot resolve a node with !<' + state.tag + '> explicit tag')
     } else {
-      state.result = type.construct(state.result, state.tag);
+      state.result = type.construct(state.result, state.tag)
       if (state.anchor !== null) {
-        state.anchorMap[state.anchor] = state.result;
+        storeAnchor(state, state.anchor, state.result)
       }
     }
   }
 
   if (state.listener !== null) {
-    state.listener('close', state);
+    state.listener('close', state)
   }
-  return state.tag !== null ||  state.anchor !== null || hasContent;
+
+  state.depth -= 1
+  return state.tag !== null || state.anchor !== null || hasContent
 }
 
-function readDocument(state) {
-  var documentStart = state.position,
-      _position,
-      directiveName,
-      directiveArgs,
-      hasDirectives = false,
-      ch;
+function readDocument (state) {
+  const documentStart = state.position
+  let hasDirectives = false
+  let ch
 
-  state.version = null;
-  state.checkLineBreaks = state.legacy;
-  state.tagMap = Object.create(null);
-  state.anchorMap = Object.create(null);
+  state.version = null
+  state.checkLineBreaks = state.legacy
+  state.tagMap = Object.create(null)
+  state.anchorMap = Object.create(null)
 
   while ((ch = state.input.charCodeAt(state.position)) !== 0) {
-    skipSeparationSpace(state, true, -1);
+    skipSeparationSpace(state, true, -1)
 
-    ch = state.input.charCodeAt(state.position);
+    ch = state.input.charCodeAt(state.position)
 
     if (state.lineIndent > 0 || ch !== 0x25/* % */) {
-      break;
+      break
     }
 
-    hasDirectives = true;
-    ch = state.input.charCodeAt(++state.position);
-    _position = state.position;
+    hasDirectives = true
+    ch = state.input.charCodeAt(++state.position)
+    let _position = state.position
 
-    while (ch !== 0 && !is_WS_OR_EOL(ch)) {
-      ch = state.input.charCodeAt(++state.position);
+    while (ch !== 0 && !isWsOrEol(ch)) {
+      ch = state.input.charCodeAt(++state.position)
     }
 
-    directiveName = state.input.slice(_position, state.position);
-    directiveArgs = [];
+    const directiveName = state.input.slice(_position, state.position)
+    const directiveArgs = []
 
     if (directiveName.length < 1) {
-      throwError(state, 'directive name must not be less than one character in length');
+      throwError(state, 'directive name must not be less than one character in length')
     }
 
     while (ch !== 0) {
-      while (is_WHITE_SPACE(ch)) {
-        ch = state.input.charCodeAt(++state.position);
+      while (isWhiteSpace(ch)) {
+        ch = state.input.charCodeAt(++state.position)
       }
 
       if (ch === 0x23/* # */) {
-        do { ch = state.input.charCodeAt(++state.position); }
-        while (ch !== 0 && !is_EOL(ch));
-        break;
+        do { ch = state.input.charCodeAt(++state.position) }
+        while (ch !== 0 && !isEol(ch))
+        break
       }
 
-      if (is_EOL(ch)) break;
+      if (isEol(ch)) break
 
-      _position = state.position;
+      _position = state.position
 
-      while (ch !== 0 && !is_WS_OR_EOL(ch)) {
-        ch = state.input.charCodeAt(++state.position);
+      while (ch !== 0 && !isWsOrEol(ch)) {
+        ch = state.input.charCodeAt(++state.position)
       }
 
-      directiveArgs.push(state.input.slice(_position, state.position));
+      directiveArgs.push(state.input.slice(_position, state.position))
     }
 
-    if (ch !== 0) readLineBreak(state);
+    if (ch !== 0) readLineBreak(state)
 
     if (_hasOwnProperty.call(directiveHandlers, directiveName)) {
-      directiveHandlers[directiveName](state, directiveName, directiveArgs);
+      directiveHandlers[directiveName](state, directiveName, directiveArgs)
     } else {
-      throwWarning(state, 'unknown document directive "' + directiveName + '"');
+      throwWarning(state, 'unknown document directive "' + directiveName + '"')
     }
   }
 
-  skipSeparationSpace(state, true, -1);
+  skipSeparationSpace(state, true, -1)
 
   if (state.lineIndent === 0 &&
-      state.input.charCodeAt(state.position)     === 0x2D/* - */ &&
+      state.input.charCodeAt(state.position) === 0x2D/* - */ &&
       state.input.charCodeAt(state.position + 1) === 0x2D/* - */ &&
       state.input.charCodeAt(state.position + 2) === 0x2D/* - */) {
-    state.position += 3;
-    skipSeparationSpace(state, true, -1);
-
+    state.position += 3
+    skipSeparationSpace(state, true, -1)
   } else if (hasDirectives) {
-    throwError(state, 'directives end mark is expected');
+    throwError(state, 'directives end mark is expected')
   }
 
-  composeNode(state, state.lineIndent - 1, CONTEXT_BLOCK_OUT, false, true);
-  skipSeparationSpace(state, true, -1);
+  composeNode(state, state.lineIndent - 1, CONTEXT_BLOCK_OUT, false, true)
+  skipSeparationSpace(state, true, -1)
 
   if (state.checkLineBreaks &&
       PATTERN_NON_ASCII_LINE_BREAKS.test(state.input.slice(documentStart, state.position))) {
-    throwWarning(state, 'non-ASCII line breaks are interpreted as content');
+    throwWarning(state, 'non-ASCII line breaks are interpreted as content')
   }
 
-  state.documents.push(state.result);
+  state.documents.push(state.result)
 
   if (state.position === state.lineStart && testDocumentSeparator(state)) {
-
     if (state.input.charCodeAt(state.position) === 0x2E/* . */) {
-      state.position += 3;
-      skipSeparationSpace(state, true, -1);
+      state.position += 3
+      skipSeparationSpace(state, true, -1)
     }
-    return;
+    return
   }
 
   if (state.position < (state.length - 1)) {
-    throwError(state, 'end of the stream or a document separator is expected');
-  } else {
-    return;
+    throwError(state, 'end of the stream or a document separator is expected')
   }
 }
 
-
-function loadDocuments(input, options) {
-  input = String(input);
-  options = options || {};
+function loadDocuments (input, options) {
+  input = String(input)
+  options = options || {}
 
   if (input.length !== 0) {
-
     // Add tailing `\n` if not exists
     if (input.charCodeAt(input.length - 1) !== 0x0A/* LF */ &&
         input.charCodeAt(input.length - 1) !== 0x0D/* CR */) {
-      input += '\n';
+      input += '\n'
     }
 
     // Strip BOM
     if (input.charCodeAt(0) === 0xFEFF) {
-      input = input.slice(1);
+      input = input.slice(1)
     }
   }
 
-  var state = new State(input, options);
+  const state = new State(input, options)
 
-  var nullpos = input.indexOf('\0');
+  const nullpos = input.indexOf('\0')
 
   if (nullpos !== -1) {
-    state.position = nullpos;
-    throwError(state, 'null byte is not allowed in input');
+    state.position = nullpos
+    throwError(state, 'null byte is not allowed in input')
   }
 
   // Use 0 as string terminator. That significantly simplifies bounds check.
-  state.input += '\0';
+  state.input += '\0'
 
   while (state.input.charCodeAt(state.position) === 0x20/* Space */) {
-    state.lineIndent += 1;
-    state.position += 1;
+    state.lineIndent += 1
+    state.position += 1
   }
 
   while (state.position < (state.length - 1)) {
-    readDocument(state);
+    readDocument(state)
   }
 
-  return state.documents;
+  return state.documents
 }
 
-
-function loadAll(input, iterator, options) {
+function loadAll (input, iterator, options) {
   if (iterator !== null && typeof iterator === 'object' && typeof options === 'undefined') {
-    options = iterator;
-    iterator = null;
+    options = iterator
+    iterator = null
   }
 
-  var documents = loadDocuments(input, options);
+  const documents = loadDocuments(input, options)
 
   if (typeof iterator !== 'function') {
-    return documents;
+    return documents
   }
 
-  for (var index = 0, length = documents.length; index < length; index += 1) {
-    iterator(documents[index]);
+  for (let index = 0, length = documents.length; index < length; index += 1) {
+    iterator(documents[index])
   }
 }
 
-
-function load(input, options) {
-  var documents = loadDocuments(input, options);
+function load (input, options) {
+  const documents = loadDocuments(input, options)
 
   if (documents.length === 0) {
-    /*eslint-disable no-undefined*/
-    return undefined;
+    return undefined
   } else if (documents.length === 1) {
-    return documents[0];
+    return documents[0]
   }
-  throw new YAMLException('expected a single document in the stream, but found more');
+  throw new YAMLException('expected a single document in the stream, but found more')
 }
 
-
-module.exports.loadAll = loadAll;
-module.exports.load    = load;
+module.exports.loadAll = loadAll
+module.exports.load = load
 
 
 /***/ }),
@@ -46434,125 +43071,113 @@ module.exports.load    = load;
 "use strict";
 
 
-/*eslint-disable max-len*/
+const YAMLException = __nccwpck_require__(41248)
+const Type = __nccwpck_require__(9557)
 
-var YAMLException = __nccwpck_require__(41248);
-var Type          = __nccwpck_require__(9557);
-
-
-function compileList(schema, name) {
-  var result = [];
+function compileList (schema, name) {
+  const result = []
 
   schema[name].forEach(function (currentType) {
-    var newIndex = result.length;
+    let newIndex = result.length
 
     result.forEach(function (previousType, previousIndex) {
       if (previousType.tag === currentType.tag &&
           previousType.kind === currentType.kind &&
           previousType.multi === currentType.multi) {
-
-        newIndex = previousIndex;
+        newIndex = previousIndex
       }
-    });
+    })
 
-    result[newIndex] = currentType;
-  });
+    result[newIndex] = currentType
+  })
 
-  return result;
+  return result
 }
 
-
-function compileMap(/* lists... */) {
-  var result = {
-        scalar: {},
-        sequence: {},
-        mapping: {},
-        fallback: {},
-        multi: {
-          scalar: [],
-          sequence: [],
-          mapping: [],
-          fallback: []
-        }
-      }, index, length;
-
-  function collectType(type) {
+function compileMap (/* lists... */) {
+  const result = {
+    scalar: {},
+    sequence: {},
+    mapping: {},
+    fallback: {},
+    multi: {
+      scalar: [],
+      sequence: [],
+      mapping: [],
+      fallback: []
+    }
+  }
+  function collectType (type) {
     if (type.multi) {
-      result.multi[type.kind].push(type);
-      result.multi['fallback'].push(type);
+      result.multi[type.kind].push(type)
+      result.multi['fallback'].push(type)
     } else {
-      result[type.kind][type.tag] = result['fallback'][type.tag] = type;
+      result[type.kind][type.tag] = result['fallback'][type.tag] = type
     }
   }
 
-  for (index = 0, length = arguments.length; index < length; index += 1) {
-    arguments[index].forEach(collectType);
+  for (let index = 0, length = arguments.length; index < length; index += 1) {
+    arguments[index].forEach(collectType)
   }
-  return result;
+  return result
 }
 
-
-function Schema(definition) {
-  return this.extend(definition);
+function Schema (definition) {
+  return this.extend(definition)
 }
 
-
-Schema.prototype.extend = function extend(definition) {
-  var implicit = [];
-  var explicit = [];
+Schema.prototype.extend = function extend (definition) {
+  let implicit = []
+  let explicit = []
 
   if (definition instanceof Type) {
     // Schema.extend(type)
-    explicit.push(definition);
-
+    explicit.push(definition)
   } else if (Array.isArray(definition)) {
     // Schema.extend([ type1, type2, ... ])
-    explicit = explicit.concat(definition);
-
+    explicit = explicit.concat(definition)
   } else if (definition && (Array.isArray(definition.implicit) || Array.isArray(definition.explicit))) {
     // Schema.extend({ explicit: [ type1, type2, ... ], implicit: [ type1, type2, ... ] })
-    if (definition.implicit) implicit = implicit.concat(definition.implicit);
-    if (definition.explicit) explicit = explicit.concat(definition.explicit);
-
+    if (definition.implicit) implicit = implicit.concat(definition.implicit)
+    if (definition.explicit) explicit = explicit.concat(definition.explicit)
   } else {
     throw new YAMLException('Schema.extend argument should be a Type, [ Type ], ' +
-      'or a schema definition ({ implicit: [...], explicit: [...] })');
+      'or a schema definition ({ implicit: [...], explicit: [...] })')
   }
 
   implicit.forEach(function (type) {
     if (!(type instanceof Type)) {
-      throw new YAMLException('Specified list of YAML types (or a single Type object) contains a non-Type object.');
+      throw new YAMLException('Specified list of YAML types (or a single Type object) contains a non-Type object.')
     }
 
     if (type.loadKind && type.loadKind !== 'scalar') {
-      throw new YAMLException('There is a non-scalar type in the implicit list of a schema. Implicit resolving of such types is not supported.');
+      throw new YAMLException('There is a non-scalar type in the implicit list of a schema. Implicit resolving of such types is not supported.')
     }
 
     if (type.multi) {
-      throw new YAMLException('There is a multi type in the implicit list of a schema. Multi tags can only be listed as explicit.');
+      throw new YAMLException('There is a multi type in the implicit list of a schema. Multi tags can only be listed as explicit.')
     }
-  });
+  })
 
   explicit.forEach(function (type) {
     if (!(type instanceof Type)) {
-      throw new YAMLException('Specified list of YAML types (or a single Type object) contains a non-Type object.');
+      throw new YAMLException('Specified list of YAML types (or a single Type object) contains a non-Type object.')
     }
-  });
+  })
 
-  var result = Object.create(Schema.prototype);
+  const result = Object.create(Schema.prototype)
 
-  result.implicit = (this.implicit || []).concat(implicit);
-  result.explicit = (this.explicit || []).concat(explicit);
+  result.implicit = (this.implicit || []).concat(implicit)
+  result.explicit = (this.explicit || []).concat(explicit)
 
-  result.compiledImplicit = compileList(result, 'implicit');
-  result.compiledExplicit = compileList(result, 'explicit');
-  result.compiledTypeMap  = compileMap(result.compiledImplicit, result.compiledExplicit);
+  result.compiledImplicit = compileList(result, 'implicit')
+  result.compiledExplicit = compileList(result, 'explicit')
+  result.compiledTypeMap = compileMap(result.compiledImplicit, result.compiledExplicit)
 
-  return result;
-};
+  return result
+}
 
-
-module.exports = Schema;
+module.exports = Schema
 
 
 /***/ }),
@@ -46569,9 +43194,7 @@ module.exports = Schema;
 
 
 
-
-
-module.exports = __nccwpck_require__(58927);
+module.exports = __nccwpck_require__(58927)
 
 
 /***/ }),
@@ -46588,8 +43211,6 @@ module.exports = __nccwpck_require__(58927);
 
 
 
-
-
 module.exports = (__nccwpck_require__(55746).extend)({
   implicit: [
     __nccwpck_require__(28966),
@@ -46601,7 +43222,7 @@ module.exports = (__nccwpck_require__(55746).extend)({
     __nccwpck_require__(16267),
     __nccwpck_require__(78758)
   ]
-});
+})
 
 
 /***/ }),
@@ -46615,10 +43236,7 @@ module.exports = (__nccwpck_require__(55746).extend)({
 
 
 
-
-
-var Schema = __nccwpck_require__(62046);
-
+const Schema = __nccwpck_require__(62046)
 
 module.exports = new Schema({
   explicit: [
@@ -46626,7 +43244,7 @@ module.exports = new Schema({
     __nccwpck_require__(77161),
     __nccwpck_require__(47316)
   ]
-});
+})
 
 
 /***/ }),
@@ -46644,8 +43262,6 @@ module.exports = new Schema({
 
 
 
-
-
 module.exports = (__nccwpck_require__(69832).extend)({
   implicit: [
     __nccwpck_require__(4333),
@@ -46653,7 +43269,7 @@ module.exports = (__nccwpck_require__(69832).extend)({
     __nccwpck_require__(62271),
     __nccwpck_require__(57584)
   ]
-});
+})
 
 
 /***/ }),
@@ -46664,105 +43280,100 @@ module.exports = (__nccwpck_require__(69832).extend)({
 "use strict";
 
 
-
-var common = __nccwpck_require__(19816);
-
+const common = __nccwpck_require__(19816)
 
 // get snippet for a single line, respecting maxLength
-function getLine(buffer, lineStart, lineEnd, position, maxLineLength) {
-  var head = '';
-  var tail = '';
-  var maxHalfLength = Math.floor(maxLineLength / 2) - 1;
+function getLine (buffer, lineStart, lineEnd, position, maxLineLength) {
+  let head = ''
+  let tail = ''
+  const maxHalfLength = Math.floor(maxLineLength / 2) - 1
 
   if (position - lineStart > maxHalfLength) {
-    head = ' ... ';
-    lineStart = position - maxHalfLength + head.length;
+    head = ' ... '
+    lineStart = position - maxHalfLength + head.length
   }
 
   if (lineEnd - position > maxHalfLength) {
-    tail = ' ...';
-    lineEnd = position + maxHalfLength - tail.length;
+    tail = ' ...'
+    lineEnd = position + maxHalfLength - tail.length
   }
 
   return {
     str: head + buffer.slice(lineStart, lineEnd).replace(/\t/g, '→') + tail,
     pos: position - lineStart + head.length // relative position
-  };
+  }
 }
 
-
-function padStart(string, max) {
-  return common.repeat(' ', max - string.length) + string;
+function padStart (string, max) {
+  return common.repeat(' ', max - string.length) + string
 }
 
+function makeSnippet (mark, options) {
+  options = Object.create(options || null)
 
-function makeSnippet(mark, options) {
-  options = Object.create(options || null);
+  if (!mark.buffer) return null
 
-  if (!mark.buffer) return null;
+  if (!options.maxLength) options.maxLength = 79
+  if (typeof options.indent !== 'number') options.indent = 1
+  if (typeof options.linesBefore !== 'number') options.linesBefore = 3
+  if (typeof options.linesAfter !== 'number') options.linesAfter = 2
 
-  if (!options.maxLength) options.maxLength = 79;
-  if (typeof options.indent      !== 'number') options.indent      = 1;
-  if (typeof options.linesBefore !== 'number') options.linesBefore = 3;
-  if (typeof options.linesAfter  !== 'number') options.linesAfter  = 2;
-
-  var re = /\r?\n|\r|\0/g;
-  var lineStarts = [ 0 ];
-  var lineEnds = [];
-  var match;
-  var foundLineNo = -1;
+  const re = /\r?\n|\r|\0/g
+  const lineStarts = [0]
+  const lineEnds = []
+  let match
+  let foundLineNo = -1
 
   while ((match = re.exec(mark.buffer))) {
-    lineEnds.push(match.index);
-    lineStarts.push(match.index + match[0].length);
+    lineEnds.push(match.index)
+    lineStarts.push(match.index + match[0].length)
 
     if (mark.position <= match.index && foundLineNo < 0) {
-      foundLineNo = lineStarts.length - 2;
+      foundLineNo = lineStarts.length - 2
     }
   }
 
-  if (foundLineNo < 0) foundLineNo = lineStarts.length - 1;
+  if (foundLineNo < 0) foundLineNo = lineStarts.length - 1
 
-  var result = '', i, line;
-  var lineNoLength = Math.min(mark.line + options.linesAfter, lineEnds.length).toString().length;
-  var maxLineLength = options.maxLength - (options.indent + lineNoLength + 3);
+  let result = ''
+  const lineNoLength = Math.min(mark.line + options.linesAfter, lineEnds.length).toString().length
+  const maxLineLength = options.maxLength - (options.indent + lineNoLength + 3)
 
-  for (i = 1; i <= options.linesBefore; i++) {
-    if (foundLineNo - i < 0) break;
-    line = getLine(
+  for (let i = 1; i <= options.linesBefore; i++) {
+    if (foundLineNo - i < 0) break
+    const line = getLine(
       mark.buffer,
       lineStarts[foundLineNo - i],
       lineEnds[foundLineNo - i],
       mark.position - (lineStarts[foundLineNo] - lineStarts[foundLineNo - i]),
       maxLineLength
-    );
+    )
     result = common.repeat(' ', options.indent) + padStart((mark.line - i + 1).toString(), lineNoLength) +
-      ' | ' + line.str + '\n' + result;
+      ' | ' + line.str + '\n' + result
   }
 
-  line = getLine(mark.buffer, lineStarts[foundLineNo], lineEnds[foundLineNo], mark.position, maxLineLength);
+  const line = getLine(mark.buffer, lineStarts[foundLineNo], lineEnds[foundLineNo], mark.position, maxLineLength)
   result += common.repeat(' ', options.indent) + padStart((mark.line + 1).toString(), lineNoLength) +
-    ' | ' + line.str + '\n';
-  result += common.repeat('-', options.indent + lineNoLength + 3 + line.pos) + '^' + '\n';
+    ' | ' + line.str + '\n'
+  result += common.repeat('-', options.indent + lineNoLength + 3 + line.pos) + '^' + '\n'
 
-  for (i = 1; i <= options.linesAfter; i++) {
-    if (foundLineNo + i >= lineEnds.length) break;
-    line = getLine(
+  for (let i = 1; i <= options.linesAfter; i++) {
+    if (foundLineNo + i >= lineEnds.length) break
+    const line = getLine(
       mark.buffer,
       lineStarts[foundLineNo + i],
       lineEnds[foundLineNo + i],
       mark.position - (lineStarts[foundLineNo] - lineStarts[foundLineNo + i]),
       maxLineLength
-    );
+    )
     result += common.repeat(' ', options.indent) + padStart((mark.line + i + 1).toString(), lineNoLength) +
-      ' | ' + line.str + '\n';
+      ' | ' + line.str + '\n'
   }
 
-  return result.replace(/\n$/, '');
+  return result.replace(/\n$/, '')
 }
 
-
-module.exports = makeSnippet;
+module.exports = makeSnippet
 
 
 /***/ }),
@@ -46773,9 +43384,9 @@ module.exports = makeSnippet;
 "use strict";
 
 
-var YAMLException = __nccwpck_require__(41248);
+const YAMLException = __nccwpck_require__(41248)
 
-var TYPE_CONSTRUCTOR_OPTIONS = [
+const TYPE_CONSTRUCTOR_OPTIONS = [
   'kind',
   'multi',
   'resolve',
@@ -46786,57 +43397,57 @@ var TYPE_CONSTRUCTOR_OPTIONS = [
   'representName',
   'defaultStyle',
   'styleAliases'
-];
+]
 
-var YAML_NODE_KINDS = [
+const YAML_NODE_KINDS = [
   'scalar',
   'sequence',
   'mapping'
-];
+]
 
-function compileStyleAliases(map) {
-  var result = {};
+function compileStyleAliases (map) {
+  const result = {}
 
   if (map !== null) {
     Object.keys(map).forEach(function (style) {
       map[style].forEach(function (alias) {
-        result[String(alias)] = style;
-      });
-    });
+        result[String(alias)] = style
+      })
+    })
   }
 
-  return result;
+  return result
 }
 
-function Type(tag, options) {
-  options = options || {};
+function Type (tag, options) {
+  options = options || {}
 
   Object.keys(options).forEach(function (name) {
     if (TYPE_CONSTRUCTOR_OPTIONS.indexOf(name) === -1) {
-      throw new YAMLException('Unknown option "' + name + '" is met in definition of "' + tag + '" YAML type.');
+      throw new YAMLException('Unknown option "' + name + '" is met in definition of "' + tag + '" YAML type.')
     }
-  });
+  })
 
   // TODO: Add tag format check.
-  this.options       = options; // keep original options in case user wants to extend this type later
-  this.tag           = tag;
-  this.kind          = options['kind']          || null;
-  this.resolve       = options['resolve']       || function () { return true; };
-  this.construct     = options['construct']     || function (data) { return data; };
-  this.instanceOf    = options['instanceOf']    || null;
-  this.predicate     = options['predicate']     || null;
-  this.represent     = options['represent']     || null;
-  this.representName = options['representName'] || null;
-  this.defaultStyle  = options['defaultStyle']  || null;
-  this.multi         = options['multi']         || false;
-  this.styleAliases  = compileStyleAliases(options['styleAliases'] || null);
+  this.options = options // keep original options in case user wants to extend this type later
+  this.tag = tag
+  this.kind = options['kind'] || null
+  this.resolve = options['resolve'] || function () { return true }
+  this.construct = options['construct'] || function (data) { return data }
+  this.instanceOf = options['instanceOf'] || null
+  this.predicate = options['predicate'] || null
+  this.represent = options['represent'] || null
+  this.representName = options['representName'] || null
+  this.defaultStyle = options['defaultStyle'] || null
+  this.multi = options['multi'] || false
+  this.styleAliases = compileStyleAliases(options['styleAliases'] || null)
 
   if (YAML_NODE_KINDS.indexOf(this.kind) === -1) {
-    throw new YAMLException('Unknown kind "' + this.kind + '" is specified for "' + tag + '" YAML type.');
+    throw new YAMLException('Unknown kind "' + this.kind + '" is specified for "' + tag + '" YAML type.')
   }
 }
 
-module.exports = Type;
+module.exports = Type
 
 
 /***/ }),
@@ -46847,120 +43458,117 @@ module.exports = Type;
 "use strict";
 
 
-/*eslint-disable no-bitwise*/
-
-
-var Type = __nccwpck_require__(9557);
-
+const Type = __nccwpck_require__(9557)
 
 // [ 64, 65, 66 ] -> [ padding, CR, LF ]
-var BASE64_MAP = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\n\r';
+const BASE64_MAP = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\n\r'
 
+function resolveYamlBinary (data) {
+  if (data === null) return false
 
-function resolveYamlBinary(data) {
-  if (data === null) return false;
-
-  var code, idx, bitlen = 0, max = data.length, map = BASE64_MAP;
+  let bitlen = 0
+  const max = data.length
+  const map = BASE64_MAP
 
   // Convert one by one.
-  for (idx = 0; idx < max; idx++) {
-    code = map.indexOf(data.charAt(idx));
+  for (let idx = 0; idx < max; idx++) {
+    const code = map.indexOf(data.charAt(idx))
 
     // Skip CR/LF
-    if (code > 64) continue;
+    if (code > 64) continue
 
     // Fail on illegal characters
-    if (code < 0) return false;
+    if (code < 0) return false
 
-    bitlen += 6;
+    bitlen += 6
   }
 
   // If there are any bits left, source was corrupted
-  return (bitlen % 8) === 0;
+  return (bitlen % 8) === 0
 }
 
-function constructYamlBinary(data) {
-  var idx, tailbits,
-      input = data.replace(/[\r\n=]/g, ''), // remove CR/LF & padding to simplify scan
-      max = input.length,
-      map = BASE64_MAP,
-      bits = 0,
-      result = [];
+function constructYamlBinary (data) {
+  const input = data.replace(/[\r\n=]/g, '') // remove CR/LF & padding to simplify scan
+  const max = input.length
+  const map = BASE64_MAP
+  let bits = 0
+  const result = []
 
   // Collect by 6*4 bits (3 bytes)
 
-  for (idx = 0; idx < max; idx++) {
+  for (let idx = 0; idx < max; idx++) {
     if ((idx % 4 === 0) && idx) {
-      result.push((bits >> 16) & 0xFF);
-      result.push((bits >> 8) & 0xFF);
-      result.push(bits & 0xFF);
+      result.push((bits >> 16) & 0xFF)
+      result.push((bits >> 8) & 0xFF)
+      result.push(bits & 0xFF)
     }
 
-    bits = (bits << 6) | map.indexOf(input.charAt(idx));
+    bits = (bits << 6) | map.indexOf(input.charAt(idx))
   }
 
   // Dump tail
 
-  tailbits = (max % 4) * 6;
+  const tailbits = (max % 4) * 6
 
   if (tailbits === 0) {
-    result.push((bits >> 16) & 0xFF);
-    result.push((bits >> 8) & 0xFF);
-    result.push(bits & 0xFF);
+    result.push((bits >> 16) & 0xFF)
+    result.push((bits >> 8) & 0xFF)
+    result.push(bits & 0xFF)
   } else if (tailbits === 18) {
-    result.push((bits >> 10) & 0xFF);
-    result.push((bits >> 2) & 0xFF);
+    result.push((bits >> 10) & 0xFF)
+    result.push((bits >> 2) & 0xFF)
   } else if (tailbits === 12) {
-    result.push((bits >> 4) & 0xFF);
+    result.push((bits >> 4) & 0xFF)
   }
 
-  return new Uint8Array(result);
+  return new Uint8Array(result)
 }
 
-function representYamlBinary(object /*, style*/) {
-  var result = '', bits = 0, idx, tail,
-      max = object.length,
-      map = BASE64_MAP;
+function representYamlBinary (object /*, style */) {
+  let result = ''
+  let bits = 0
+  const max = object.length
+  const map = BASE64_MAP
 
   // Convert every three bytes to 4 ASCII characters.
 
-  for (idx = 0; idx < max; idx++) {
+  for (let idx = 0; idx < max; idx++) {
     if ((idx % 3 === 0) && idx) {
-      result += map[(bits >> 18) & 0x3F];
-      result += map[(bits >> 12) & 0x3F];
-      result += map[(bits >> 6) & 0x3F];
-      result += map[bits & 0x3F];
+      result += map[(bits >> 18) & 0x3F]
+      result += map[(bits >> 12) & 0x3F]
+      result += map[(bits >> 6) & 0x3F]
+      result += map[bits & 0x3F]
     }
 
-    bits = (bits << 8) + object[idx];
+    bits = (bits << 8) + object[idx]
   }
 
   // Dump tail
 
-  tail = max % 3;
+  const tail = max % 3
 
   if (tail === 0) {
-    result += map[(bits >> 18) & 0x3F];
-    result += map[(bits >> 12) & 0x3F];
-    result += map[(bits >> 6) & 0x3F];
-    result += map[bits & 0x3F];
+    result += map[(bits >> 18) & 0x3F]
+    result += map[(bits >> 12) & 0x3F]
+    result += map[(bits >> 6) & 0x3F]
+    result += map[bits & 0x3F]
   } else if (tail === 2) {
-    result += map[(bits >> 10) & 0x3F];
-    result += map[(bits >> 4) & 0x3F];
-    result += map[(bits << 2) & 0x3F];
-    result += map[64];
+    result += map[(bits >> 10) & 0x3F]
+    result += map[(bits >> 4) & 0x3F]
+    result += map[(bits << 2) & 0x3F]
+    result += map[64]
   } else if (tail === 1) {
-    result += map[(bits >> 2) & 0x3F];
-    result += map[(bits << 4) & 0x3F];
-    result += map[64];
-    result += map[64];
+    result += map[(bits >> 2) & 0x3F]
+    result += map[(bits << 4) & 0x3F]
+    result += map[64]
+    result += map[64]
   }
 
-  return result;
+  return result
 }
 
-function isBinary(obj) {
-  return Object.prototype.toString.call(obj) ===  '[object Uint8Array]';
+function isBinary (obj) {
+  return Object.prototype.toString.call(obj) === '[object Uint8Array]'
 }
 
 module.exports = new Type('tag:yaml.org,2002:binary', {
@@ -46969,7 +43577,7 @@ module.exports = new Type('tag:yaml.org,2002:binary', {
   construct: constructYamlBinary,
   predicate: isBinary,
   represent: representYamlBinary
-});
+})
 
 
 /***/ }),
@@ -46980,25 +43588,25 @@ module.exports = new Type('tag:yaml.org,2002:binary', {
 "use strict";
 
 
-var Type = __nccwpck_require__(9557);
+const Type = __nccwpck_require__(9557)
 
-function resolveYamlBoolean(data) {
-  if (data === null) return false;
+function resolveYamlBoolean (data) {
+  if (data === null) return false
 
-  var max = data.length;
+  const max = data.length
 
   return (max === 4 && (data === 'true' || data === 'True' || data === 'TRUE')) ||
-         (max === 5 && (data === 'false' || data === 'False' || data === 'FALSE'));
+         (max === 5 && (data === 'false' || data === 'False' || data === 'FALSE'))
 }
 
-function constructYamlBoolean(data) {
+function constructYamlBoolean (data) {
   return data === 'true' ||
          data === 'True' ||
-         data === 'TRUE';
+         data === 'TRUE'
 }
 
-function isBoolean(object) {
-  return Object.prototype.toString.call(object) === '[object Boolean]';
+function isBoolean (object) {
+  return Object.prototype.toString.call(object) === '[object Boolean]'
 }
 
 module.exports = new Type('tag:yaml.org,2002:bool', {
@@ -47007,12 +43615,12 @@ module.exports = new Type('tag:yaml.org,2002:bool', {
   construct: constructYamlBoolean,
   predicate: isBoolean,
   represent: {
-    lowercase: function (object) { return object ? 'true' : 'false'; },
-    uppercase: function (object) { return object ? 'TRUE' : 'FALSE'; },
-    camelcase: function (object) { return object ? 'True' : 'False'; }
+    lowercase: function (object) { return object ? 'true' : 'false' },
+    uppercase: function (object) { return object ? 'TRUE' : 'FALSE' },
+    camelcase: function (object) { return object ? 'True' : 'False' }
   },
   defaultStyle: 'lowercase'
-});
+})
 
 
 /***/ }),
@@ -47023,91 +43631,93 @@ module.exports = new Type('tag:yaml.org,2002:bool', {
 "use strict";
 
 
-var common = __nccwpck_require__(19816);
-var Type   = __nccwpck_require__(9557);
+const common = __nccwpck_require__(19816)
+const Type = __nccwpck_require__(9557)
 
-var YAML_FLOAT_PATTERN = new RegExp(
+const YAML_FLOAT_PATTERN = new RegExp(
   // 2.5e4, 2.5 and integers
-  '^(?:[-+]?(?:[0-9][0-9_]*)(?:\\.[0-9_]*)?(?:[eE][-+]?[0-9]+)?' +
+  '^(?:[-+]?(?:[0-9]+)(?:\\.[0-9]*)?(?:[eE][-+]?[0-9]+)?' +
   // .2e4, .2
   // special case, seems not from spec
-  '|\\.[0-9_]+(?:[eE][-+]?[0-9]+)?' +
+  '|\\.[0-9]+(?:[eE][-+]?[0-9]+)?' +
   // .inf
   '|[-+]?\\.(?:inf|Inf|INF)' +
   // .nan
-  '|\\.(?:nan|NaN|NAN))$');
+  '|\\.(?:nan|NaN|NAN))$')
 
-function resolveYamlFloat(data) {
-  if (data === null) return false;
+const YAML_FLOAT_SPECIAL_PATTERN = new RegExp(
+  '^(?:' +
+  // .inf
+  '[-+]?\\.(?:inf|Inf|INF)' +
+  // .nan
+  '|\\.(?:nan|NaN|NAN))$')
 
-  if (!YAML_FLOAT_PATTERN.test(data) ||
-      // Quick hack to not allow integers end with `_`
-      // Probably should update regexp & check speed
-      data[data.length - 1] === '_') {
-    return false;
+function resolveYamlFloat (data) {
+  if (data === null) return false
+
+  if (!YAML_FLOAT_PATTERN.test(data)) {
+    return false
   }
 
-  return true;
+  if (isFinite(parseFloat(data, 10))) {
+    return true
+  }
+
+  return YAML_FLOAT_SPECIAL_PATTERN.test(data)
 }
 
-function constructYamlFloat(data) {
-  var value, sign;
-
-  value  = data.replace(/_/g, '').toLowerCase();
-  sign   = value[0] === '-' ? -1 : 1;
+function constructYamlFloat (data) {
+  let value = data.toLowerCase()
+  const sign = value[0] === '-' ? -1 : 1
 
   if ('+-'.indexOf(value[0]) >= 0) {
-    value = value.slice(1);
+    value = value.slice(1)
   }
 
   if (value === '.inf') {
-    return (sign === 1) ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
-
+    return (sign === 1) ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY
   } else if (value === '.nan') {
-    return NaN;
+    return NaN
   }
-  return sign * parseFloat(value, 10);
+  return sign * parseFloat(value, 10)
 }
 
+const SCIENTIFIC_WITHOUT_DOT = /^[-+]?[0-9]+e/
 
-var SCIENTIFIC_WITHOUT_DOT = /^[-+]?[0-9]+e/;
-
-function representYamlFloat(object, style) {
-  var res;
-
+function representYamlFloat (object, style) {
   if (isNaN(object)) {
     switch (style) {
-      case 'lowercase': return '.nan';
-      case 'uppercase': return '.NAN';
-      case 'camelcase': return '.NaN';
+      case 'lowercase': return '.nan'
+      case 'uppercase': return '.NAN'
+      case 'camelcase': return '.NaN'
     }
   } else if (Number.POSITIVE_INFINITY === object) {
     switch (style) {
-      case 'lowercase': return '.inf';
-      case 'uppercase': return '.INF';
-      case 'camelcase': return '.Inf';
+      case 'lowercase': return '.inf'
+      case 'uppercase': return '.INF'
+      case 'camelcase': return '.Inf'
     }
   } else if (Number.NEGATIVE_INFINITY === object) {
     switch (style) {
-      case 'lowercase': return '-.inf';
-      case 'uppercase': return '-.INF';
-      case 'camelcase': return '-.Inf';
+      case 'lowercase': return '-.inf'
+      case 'uppercase': return '-.INF'
+      case 'camelcase': return '-.Inf'
     }
   } else if (common.isNegativeZero(object)) {
-    return '-0.0';
+    return '-0.0'
   }
 
-  res = object.toString(10);
+  const res = object.toString(10)
 
   // JS stringifier can build scientific format without dots: 5e-100,
   // while YAML requres dot: 5.e-100. Fix it with simple hack
 
-  return SCIENTIFIC_WITHOUT_DOT.test(res) ? res.replace('e', '.e') : res;
+  return SCIENTIFIC_WITHOUT_DOT.test(res) ? res.replace('e', '.e') : res
 }
 
-function isFloat(object) {
+function isFloat (object) {
   return (Object.prototype.toString.call(object) === '[object Number]') &&
-         (object % 1 !== 0 || common.isNegativeZero(object));
+         (object % 1 !== 0 || common.isNegativeZero(object))
 }
 
 module.exports = new Type('tag:yaml.org,2002:float', {
@@ -47117,7 +43727,7 @@ module.exports = new Type('tag:yaml.org,2002:float', {
   predicate: isFloat,
   represent: representYamlFloat,
   defaultStyle: 'lowercase'
-});
+})
 
 
 /***/ }),
@@ -47128,138 +43738,125 @@ module.exports = new Type('tag:yaml.org,2002:float', {
 "use strict";
 
 
-var common = __nccwpck_require__(19816);
-var Type   = __nccwpck_require__(9557);
+const common = __nccwpck_require__(19816)
+const Type = __nccwpck_require__(9557)
 
-function isHexCode(c) {
-  return ((0x30/* 0 */ <= c) && (c <= 0x39/* 9 */)) ||
-         ((0x41/* A */ <= c) && (c <= 0x46/* F */)) ||
-         ((0x61/* a */ <= c) && (c <= 0x66/* f */));
+function isHexCode (c) {
+  return ((c >= 0x30/* 0 */) && (c <= 0x39/* 9 */)) ||
+         ((c >= 0x41/* A */) && (c <= 0x46/* F */)) ||
+         ((c >= 0x61/* a */) && (c <= 0x66/* f */))
 }
 
-function isOctCode(c) {
-  return ((0x30/* 0 */ <= c) && (c <= 0x37/* 7 */));
+function isOctCode (c) {
+  return ((c >= 0x30/* 0 */) && (c <= 0x37/* 7 */))
 }
 
-function isDecCode(c) {
-  return ((0x30/* 0 */ <= c) && (c <= 0x39/* 9 */));
+function isDecCode (c) {
+  return ((c >= 0x30/* 0 */) && (c <= 0x39/* 9 */))
 }
 
-function resolveYamlInteger(data) {
-  if (data === null) return false;
+function resolveYamlInteger (data) {
+  if (data === null) return false
 
-  var max = data.length,
-      index = 0,
-      hasDigits = false,
-      ch;
+  const max = data.length
+  let index = 0
+  let hasDigits = false
 
-  if (!max) return false;
+  if (!max) return false
 
-  ch = data[index];
+  let ch = data[index]
 
   // sign
   if (ch === '-' || ch === '+') {
-    ch = data[++index];
+    ch = data[++index]
   }
 
   if (ch === '0') {
     // 0
-    if (index + 1 === max) return true;
-    ch = data[++index];
+    if (index + 1 === max) return true
+    ch = data[++index]
 
     // base 2, base 8, base 16
 
     if (ch === 'b') {
       // base 2
-      index++;
+      index++
 
       for (; index < max; index++) {
-        ch = data[index];
-        if (ch === '_') continue;
-        if (ch !== '0' && ch !== '1') return false;
-        hasDigits = true;
+        ch = data[index]
+        if (ch !== '0' && ch !== '1') return false
+        hasDigits = true
       }
-      return hasDigits && ch !== '_';
+      return hasDigits && isFinite(parseYamlInteger(data))
     }
-
 
     if (ch === 'x') {
       // base 16
-      index++;
+      index++
 
       for (; index < max; index++) {
-        ch = data[index];
-        if (ch === '_') continue;
-        if (!isHexCode(data.charCodeAt(index))) return false;
-        hasDigits = true;
+        if (!isHexCode(data.charCodeAt(index))) return false
+        hasDigits = true
       }
-      return hasDigits && ch !== '_';
+      return hasDigits && isFinite(parseYamlInteger(data))
     }
-
 
     if (ch === 'o') {
       // base 8
-      index++;
+      index++
 
       for (; index < max; index++) {
-        ch = data[index];
-        if (ch === '_') continue;
-        if (!isOctCode(data.charCodeAt(index))) return false;
-        hasDigits = true;
+        if (!isOctCode(data.charCodeAt(index))) return false
+        hasDigits = true
       }
-      return hasDigits && ch !== '_';
+      return hasDigits && isFinite(parseYamlInteger(data))
     }
   }
 
   // base 10 (except 0)
 
-  // value should not start with `_`;
-  if (ch === '_') return false;
-
   for (; index < max; index++) {
-    ch = data[index];
-    if (ch === '_') continue;
     if (!isDecCode(data.charCodeAt(index))) {
-      return false;
+      return false
     }
-    hasDigits = true;
+    hasDigits = true
   }
 
-  // Should have digits and should not end with `_`
-  if (!hasDigits || ch === '_') return false;
+  if (!hasDigits) return false
 
-  return true;
+  return isFinite(parseYamlInteger(data))
 }
 
-function constructYamlInteger(data) {
-  var value = data, sign = 1, ch;
+function parseYamlInteger (data) {
+  let value = data
+  let sign = 1
 
-  if (value.indexOf('_') !== -1) {
-    value = value.replace(/_/g, '');
-  }
-
-  ch = value[0];
+  let ch = value[0]
 
   if (ch === '-' || ch === '+') {
-    if (ch === '-') sign = -1;
-    value = value.slice(1);
-    ch = value[0];
+    if (ch === '-') sign = -1
+    value = value.slice(1)
+    ch = value[0]
   }
 
-  if (value === '0') return 0;
+  if (value === '0') return 0
 
   if (ch === '0') {
-    if (value[1] === 'b') return sign * parseInt(value.slice(2), 2);
-    if (value[1] === 'x') return sign * parseInt(value.slice(2), 16);
-    if (value[1] === 'o') return sign * parseInt(value.slice(2), 8);
+    if (value[1] === 'b') return sign * parseInt(value.slice(2), 2)
+    if (value[1] === 'x') return sign * parseInt(value.slice(2), 16)
+    if (value[1] === 'o') return sign * parseInt(value.slice(2), 8)
   }
 
-  return sign * parseInt(value, 10);
+  return sign * parseInt(value, 10)
 }
 
-function isInteger(object) {
+function constructYamlInteger (data) {
+  return parseYamlInteger(data)
+}
+
+function isInteger (object) {
   return (Object.prototype.toString.call(object)) === '[object Number]' &&
-         (object % 1 === 0 && !common.isNegativeZero(object));
+         (object % 1 === 0 && !common.isNegativeZero(object))
 }
 
 module.exports = new Type('tag:yaml.org,2002:int', {
@@ -47268,20 +43865,19 @@ module.exports = new Type('tag:yaml.org,2002:int', {
   construct: constructYamlInteger,
   predicate: isInteger,
   represent: {
-    binary:      function (obj) { return obj >= 0 ? '0b' + obj.toString(2) : '-0b' + obj.toString(2).slice(1); },
-    octal:       function (obj) { return obj >= 0 ? '0o'  + obj.toString(8) : '-0o'  + obj.toString(8).slice(1); },
-    decimal:     function (obj) { return obj.toString(10); },
-    /* eslint-disable max-len */
-    hexadecimal: function (obj) { return obj >= 0 ? '0x' + obj.toString(16).toUpperCase() :  '-0x' + obj.toString(16).toUpperCase().slice(1); }
+    binary: function (obj) { return obj >= 0 ? '0b' + obj.toString(2) : '-0b' + obj.toString(2).slice(1) },
+    octal: function (obj) { return obj >= 0 ? '0o' + obj.toString(8) : '-0o' + obj.toString(8).slice(1) },
+    decimal: function (obj) { return obj.toString(10) },
+    hexadecimal: function (obj) { return obj >= 0 ? '0x' + obj.toString(16).toUpperCase() : '-0x' + obj.toString(16).toUpperCase().slice(1) }
   },
   defaultStyle: 'decimal',
   styleAliases: {
-    binary:      [ 2,  'bin' ],
-    octal:       [ 8,  'oct' ],
-    decimal:     [ 10, 'dec' ],
-    hexadecimal: [ 16, 'hex' ]
+    binary: [2, 'bin'],
+    octal: [8, 'oct'],
+    decimal: [10, 'dec'],
+    hexadecimal: [16, 'hex']
   }
-});
+})
 
 
 /***/ }),
@@ -47292,12 +43888,12 @@ module.exports = new Type('tag:yaml.org,2002:int', {
 "use strict";
 
 
-var Type = __nccwpck_require__(9557);
+const Type = __nccwpck_require__(9557)
 
 module.exports = new Type('tag:yaml.org,2002:map', {
   kind: 'mapping',
-  construct: function (data) { return data !== null ? data : {}; }
-});
+  construct: function (data) { return data !== null ? data : {} }
+})
 
 
 /***/ }),
@@ -47308,16 +43904,16 @@ module.exports = new Type('tag:yaml.org,2002:map', {
 "use strict";
 
 
-var Type = __nccwpck_require__(9557);
+const Type = __nccwpck_require__(9557)
 
-function resolveYamlMerge(data) {
-  return data === '<<' || data === null;
+function resolveYamlMerge (data) {
+  return data === '<<' || data === null
 }
 
 module.exports = new Type('tag:yaml.org,2002:merge', {
   kind: 'scalar',
   resolve: resolveYamlMerge
-});
+})
 
 
 /***/ }),
@@ -47328,23 +43924,23 @@ module.exports = new Type('tag:yaml.org,2002:merge', {
 "use strict";
 
 
-var Type = __nccwpck_require__(9557);
+const Type = __nccwpck_require__(9557)
 
-function resolveYamlNull(data) {
-  if (data === null) return true;
+function resolveYamlNull (data) {
+  if (data === null) return true
 
-  var max = data.length;
+  const max = data.length
 
   return (max === 1 && data === '~') ||
-         (max === 4 && (data === 'null' || data === 'Null' || data === 'NULL'));
+         (max === 4 && (data === 'null' || data === 'Null' || data === 'NULL'))
 }
 
-function constructYamlNull() {
-  return null;
+function constructYamlNull () {
+  return null
 }
 
-function isNull(object) {
-  return object === null;
+function isNull (object) {
+  return object === null
 }
 
 module.exports = new Type('tag:yaml.org,2002:null', {
@@ -47353,14 +43949,14 @@ module.exports = new Type('tag:yaml.org,2002:null', {
   construct: constructYamlNull,
   predicate: isNull,
   represent: {
-    canonical: function () { return '~';    },
-    lowercase: function () { return 'null'; },
-    uppercase: function () { return 'NULL'; },
-    camelcase: function () { return 'Null'; },
-    empty:     function () { return '';     }
+    canonical: function () { return '~' },
+    lowercase: function () { return 'null' },
+    uppercase: function () { return 'NULL' },
+    camelcase: function () { return 'Null' },
+    empty: function () { return '' }
   },
   defaultStyle: 'lowercase'
-});
+})
 
 
 /***/ }),
@@ -47371,48 +43967,49 @@ module.exports = new Type('tag:yaml.org,2002:null', {
 "use strict";
 
 
-var Type = __nccwpck_require__(9557);
+const Type = __nccwpck_require__(9557)
 
-var _hasOwnProperty = Object.prototype.hasOwnProperty;
-var _toString       = Object.prototype.toString;
+const _hasOwnProperty = Object.prototype.hasOwnProperty
+const _toString = Object.prototype.toString
 
-function resolveYamlOmap(data) {
-  if (data === null) return true;
+function resolveYamlOmap (data) {
+  if (data === null) return true
 
-  var objectKeys = [], index, length, pair, pairKey, pairHasKey,
-      object = data;
+  const objectKeys = {}
+  const object = data
 
-  for (index = 0, length = object.length; index < length; index += 1) {
-    pair = object[index];
-    pairHasKey = false;
+  for (let index = 0, length = object.length; index < length; index += 1) {
+    const pair = object[index]
+    let pairHasKey = false
 
-    if (_toString.call(pair) !== '[object Object]') return false;
+    if (_toString.call(pair) !== '[object Object]') return false
 
+    let pairKey
     for (pairKey in pair) {
       if (_hasOwnProperty.call(pair, pairKey)) {
-        if (!pairHasKey) pairHasKey = true;
-        else return false;
+        if (!pairHasKey) pairHasKey = true
+        else return false
       }
     }
 
-    if (!pairHasKey) return false;
+    if (!pairHasKey) return false
 
-    if (objectKeys.indexOf(pairKey) === -1) objectKeys.push(pairKey);
-    else return false;
+    if (_hasOwnProperty.call(objectKeys, pairKey)) return false
+    Object.defineProperty(objectKeys, pairKey, { value: true })
   }
 
-  return true;
+  return true
 }
 
-function constructYamlOmap(data) {
-  return data !== null ? data : [];
+function constructYamlOmap (data) {
+  return data !== null ? data : []
 }
 
 module.exports = new Type('tag:yaml.org,2002:omap', {
   kind: 'sequence',
   resolve: resolveYamlOmap,
   construct: constructYamlOmap
-});
+})
 
 
 /***/ }),
@@ -47423,57 +44020,54 @@ module.exports = new Type('tag:yaml.org,2002:omap', {
 "use strict";
 
 
-var Type = __nccwpck_require__(9557);
+const Type = __nccwpck_require__(9557)
 
-var _toString = Object.prototype.toString;
+const _toString = Object.prototype.toString
 
-function resolveYamlPairs(data) {
-  if (data === null) return true;
+function resolveYamlPairs (data) {
+  if (data === null) return true
 
-  var index, length, pair, keys, result,
-      object = data;
+  const object = data
 
-  result = new Array(object.length);
+  const result = new Array(object.length)
 
-  for (index = 0, length = object.length; index < length; index += 1) {
-    pair = object[index];
+  for (let index = 0, length = object.length; index < length; index += 1) {
+    const pair = object[index]
 
-    if (_toString.call(pair) !== '[object Object]') return false;
+    if (_toString.call(pair) !== '[object Object]') return false
 
-    keys = Object.keys(pair);
+    const keys = Object.keys(pair)
 
-    if (keys.length !== 1) return false;
+    if (keys.length !== 1) return false
 
-    result[index] = [ keys[0], pair[keys[0]] ];
+    result[index] = [keys[0], pair[keys[0]]]
   }
 
-  return true;
+  return true
 }
 
-function constructYamlPairs(data) {
-  if (data === null) return [];
+function constructYamlPairs (data) {
+  if (data === null) return []
 
-  var index, length, pair, keys, result,
-      object = data;
+  const object = data
+  const result = new Array(object.length)
 
-  result = new Array(object.length);
+  for (let index = 0, length = object.length; index < length; index += 1) {
+    const pair = object[index]
 
-  for (index = 0, length = object.length; index < length; index += 1) {
-    pair = object[index];
+    const keys = Object.keys(pair)
 
-    keys = Object.keys(pair);
-
-    result[index] = [ keys[0], pair[keys[0]] ];
+    result[index] = [keys[0], pair[keys[0]]]
   }
 
-  return result;
+  return result
 }
 
 module.exports = new Type('tag:yaml.org,2002:pairs', {
   kind: 'sequence',
   resolve: resolveYamlPairs,
   construct: constructYamlPairs
-});
+})
 
 
 /***/ }),
@@ -47484,12 +44078,12 @@ module.exports = new Type('tag:yaml.org,2002:pairs', {
 "use strict";
 
 
-var Type = __nccwpck_require__(9557);
+const Type = __nccwpck_require__(9557)
 
 module.exports = new Type('tag:yaml.org,2002:seq', {
   kind: 'sequence',
-  construct: function (data) { return data !== null ? data : []; }
-});
+  construct: function (data) { return data !== null ? data : [] }
+})
 
 
 /***/ }),
@@ -47500,33 +44094,33 @@ module.exports = new Type('tag:yaml.org,2002:seq', {
 "use strict";
 
 
-var Type = __nccwpck_require__(9557);
+const Type = __nccwpck_require__(9557)
 
-var _hasOwnProperty = Object.prototype.hasOwnProperty;
+const _hasOwnProperty = Object.prototype.hasOwnProperty
 
-function resolveYamlSet(data) {
-  if (data === null) return true;
+function resolveYamlSet (data) {
+  if (data === null) return true
 
-  var key, object = data;
+  const object = data
 
-  for (key in object) {
+  for (const key in object) {
     if (_hasOwnProperty.call(object, key)) {
-      if (object[key] !== null) return false;
+      if (object[key] !== null) return false
     }
   }
 
-  return true;
+  return true
 }
 
-function constructYamlSet(data) {
-  return data !== null ? data : {};
+function constructYamlSet (data) {
+  return data !== null ? data : {}
 }
 
 module.exports = new Type('tag:yaml.org,2002:set', {
   kind: 'mapping',
   resolve: resolveYamlSet,
   construct: constructYamlSet
-});
+})
 
 
 /***/ }),
@@ -47537,12 +44131,12 @@ module.exports = new Type('tag:yaml.org,2002:set', {
 "use strict";
 
 
-var Type = __nccwpck_require__(9557);
+const Type = __nccwpck_require__(9557)
 
 module.exports = new Type('tag:yaml.org,2002:str', {
   kind: 'scalar',
-  construct: function (data) { return data !== null ? data : ''; }
-});
+  construct: function (data) { return data !== null ? data : '' }
+})
 
 
 /***/ }),
@@ -47553,83 +44147,83 @@ module.exports = new Type('tag:yaml.org,2002:str', {
 "use strict";
 
 
-var Type = __nccwpck_require__(9557);
+const Type = __nccwpck_require__(9557)
 
-var YAML_DATE_REGEXP = new RegExp(
-  '^([0-9][0-9][0-9][0-9])'          + // [1] year
-  '-([0-9][0-9])'                    + // [2] month
-  '-([0-9][0-9])$');                   // [3] day
+const YAML_DATE_REGEXP = new RegExp(
+  '^([0-9][0-9][0-9][0-9])' + // [1] year
+  '-([0-9][0-9])' + // [2] month
+  '-([0-9][0-9])$')                   // [3] day
 
-var YAML_TIMESTAMP_REGEXP = new RegExp(
-  '^([0-9][0-9][0-9][0-9])'          + // [1] year
-  '-([0-9][0-9]?)'                   + // [2] month
-  '-([0-9][0-9]?)'                   + // [3] day
-  '(?:[Tt]|[ \\t]+)'                 + // ...
-  '([0-9][0-9]?)'                    + // [4] hour
-  ':([0-9][0-9])'                    + // [5] minute
-  ':([0-9][0-9])'                    + // [6] second
-  '(?:\\.([0-9]*))?'                 + // [7] fraction
-  '(?:[ \\t]*(Z|([-+])([0-9][0-9]?)' + // [8] tz [9] tz_sign [10] tz_hour
-  '(?::([0-9][0-9]))?))?$');           // [11] tz_minute
+const YAML_TIMESTAMP_REGEXP = new RegExp(
+  '^([0-9][0-9][0-9][0-9])' + // [1] year
+  '-([0-9][0-9]?)' + // [2] month
+  '-([0-9][0-9]?)' + // [3] day
+  '(?:[Tt]|[ \\t]+)' + // ...
+  '([0-9][0-9]?)' + // [4] hour
+  ':([0-9][0-9])' + // [5] minute
+  ':([0-9][0-9])' + // [6] second
+  '(?:\\.([0-9]*))?' + // [7] fraction
+  '(?:[ \\t]*(Z|([-+])([0-9][0-9]?)' + // [8] tz [9] tz_sign [10] tzHour
+  '(?::([0-9][0-9]))?))?$')           // [11] tzMinute
 
-function resolveYamlTimestamp(data) {
-  if (data === null) return false;
-  if (YAML_DATE_REGEXP.exec(data) !== null) return true;
-  if (YAML_TIMESTAMP_REGEXP.exec(data) !== null) return true;
-  return false;
+function resolveYamlTimestamp (data) {
+  if (data === null) return false
+  if (YAML_DATE_REGEXP.exec(data) !== null) return true
+  if (YAML_TIMESTAMP_REGEXP.exec(data) !== null) return true
+  return false
 }
 
-function constructYamlTimestamp(data) {
-  var match, year, month, day, hour, minute, second, fraction = 0,
-      delta = null, tz_hour, tz_minute, date;
+function constructYamlTimestamp (data) {
+  let fraction = 0
+  let delta = null
 
-  match = YAML_DATE_REGEXP.exec(data);
-  if (match === null) match = YAML_TIMESTAMP_REGEXP.exec(data);
+  let match = YAML_DATE_REGEXP.exec(data)
+  if (match === null) match = YAML_TIMESTAMP_REGEXP.exec(data)
 
-  if (match === null) throw new Error('Date resolve error');
+  if (match === null) throw new Error('Date resolve error')
 
   // match: [1] year [2] month [3] day
 
-  year = +(match[1]);
-  month = +(match[2]) - 1; // JS month starts with 0
-  day = +(match[3]);
+  const year = +(match[1])
+  const month = +(match[2]) - 1 // JS month starts with 0
+  const day = +(match[3])
 
   if (!match[4]) { // no hour
-    return new Date(Date.UTC(year, month, day));
+    return new Date(Date.UTC(year, month, day))
   }
 
   // match: [4] hour [5] minute [6] second [7] fraction
 
-  hour = +(match[4]);
-  minute = +(match[5]);
-  second = +(match[6]);
+  const hour = +(match[4])
+  const minute = +(match[5])
+  const second = +(match[6])
 
   if (match[7]) {
-    fraction = match[7].slice(0, 3);
+    fraction = match[7].slice(0, 3)
     while (fraction.length < 3) { // milli-seconds
-      fraction += '0';
+      fraction += '0'
     }
-    fraction = +fraction;
+    fraction = +fraction
   }
 
-  // match: [8] tz [9] tz_sign [10] tz_hour [11] tz_minute
+  // match: [8] tz [9] tz_sign [10] tzHour [11] tzMinute
 
   if (match[9]) {
-    tz_hour = +(match[10]);
-    tz_minute = +(match[11] || 0);
-    delta = (tz_hour * 60 + tz_minute) * 60000; // delta in mili-seconds
-    if (match[9] === '-') delta = -delta;
+    const tzHour = +(match[10])
+    const tzMinute = +(match[11] || 0)
+    delta = (tzHour * 60 + tzMinute) * 60000 // delta in mili-seconds
+    if (match[9] === '-') delta = -delta
   }
 
-  date = new Date(Date.UTC(year, month, day, hour, minute, second, fraction));
+  const date = new Date(Date.UTC(year, month, day, hour, minute, second, fraction))
 
-  if (delta) date.setTime(date.getTime() - delta);
+  if (delta) date.setTime(date.getTime() - delta)
 
-  return date;
+  return date
 }
 
-function representYamlTimestamp(object /*, style*/) {
-  return object.toISOString();
+function representYamlTimestamp (object /*, style */) {
+  return object.toISOString()
 }
 
 module.exports = new Type('tag:yaml.org,2002:timestamp', {
@@ -47638,1370 +44232,7 @@ module.exports = new Type('tag:yaml.org,2002:timestamp', {
   construct: constructYamlTimestamp,
   instanceOf: Date,
   represent: representYamlTimestamp
-});
-
-
-/***/ }),
-
-/***/ 95947:
-/***/ (function(module, exports) {
-
-(function(){
-
-    // Copyright (c) 2005  Tom Wu
-    // All Rights Reserved.
-    // See "LICENSE" for details.
-
-    // Basic JavaScript BN library - subset useful for RSA encryption.
-
-    // Bits per digit
-    var dbits;
-
-    // JavaScript engine analysis
-    var canary = 0xdeadbeefcafe;
-    var j_lm = ((canary&0xffffff)==0xefcafe);
-
-    // (public) Constructor
-    function BigInteger(a,b,c) {
-      if(a != null)
-        if("number" == typeof a) this.fromNumber(a,b,c);
-        else if(b == null && "string" != typeof a) this.fromString(a,256);
-        else this.fromString(a,b);
-    }
-
-    // return new, unset BigInteger
-    function nbi() { return new BigInteger(null); }
-
-    // am: Compute w_j += (x*this_i), propagate carries,
-    // c is initial carry, returns final carry.
-    // c < 3*dvalue, x < 2*dvalue, this_i < dvalue
-    // We need to select the fastest one that works in this environment.
-
-    // am1: use a single mult and divide to get the high bits,
-    // max digit bits should be 26 because
-    // max internal value = 2*dvalue^2-2*dvalue (< 2^53)
-    function am1(i,x,w,j,c,n) {
-      while(--n >= 0) {
-        var v = x*this[i++]+w[j]+c;
-        c = Math.floor(v/0x4000000);
-        w[j++] = v&0x3ffffff;
-      }
-      return c;
-    }
-    // am2 avoids a big mult-and-extract completely.
-    // Max digit bits should be <= 30 because we do bitwise ops
-    // on values up to 2*hdvalue^2-hdvalue-1 (< 2^31)
-    function am2(i,x,w,j,c,n) {
-      var xl = x&0x7fff, xh = x>>15;
-      while(--n >= 0) {
-        var l = this[i]&0x7fff;
-        var h = this[i++]>>15;
-        var m = xh*l+h*xl;
-        l = xl*l+((m&0x7fff)<<15)+w[j]+(c&0x3fffffff);
-        c = (l>>>30)+(m>>>15)+xh*h+(c>>>30);
-        w[j++] = l&0x3fffffff;
-      }
-      return c;
-    }
-    // Alternately, set max digit bits to 28 since some
-    // browsers slow down when dealing with 32-bit numbers.
-    function am3(i,x,w,j,c,n) {
-      var xl = x&0x3fff, xh = x>>14;
-      while(--n >= 0) {
-        var l = this[i]&0x3fff;
-        var h = this[i++]>>14;
-        var m = xh*l+h*xl;
-        l = xl*l+((m&0x3fff)<<14)+w[j]+c;
-        c = (l>>28)+(m>>14)+xh*h;
-        w[j++] = l&0xfffffff;
-      }
-      return c;
-    }
-    var inBrowser = typeof navigator !== "undefined";
-    if(inBrowser && j_lm && (navigator.appName == "Microsoft Internet Explorer")) {
-      BigInteger.prototype.am = am2;
-      dbits = 30;
-    }
-    else if(inBrowser && j_lm && (navigator.appName != "Netscape")) {
-      BigInteger.prototype.am = am1;
-      dbits = 26;
-    }
-    else { // Mozilla/Netscape seems to prefer am3
-      BigInteger.prototype.am = am3;
-      dbits = 28;
-    }
-
-    BigInteger.prototype.DB = dbits;
-    BigInteger.prototype.DM = ((1<<dbits)-1);
-    BigInteger.prototype.DV = (1<<dbits);
-
-    var BI_FP = 52;
-    BigInteger.prototype.FV = Math.pow(2,BI_FP);
-    BigInteger.prototype.F1 = BI_FP-dbits;
-    BigInteger.prototype.F2 = 2*dbits-BI_FP;
-
-    // Digit conversions
-    var BI_RM = "0123456789abcdefghijklmnopqrstuvwxyz";
-    var BI_RC = new Array();
-    var rr,vv;
-    rr = "0".charCodeAt(0);
-    for(vv = 0; vv <= 9; ++vv) BI_RC[rr++] = vv;
-    rr = "a".charCodeAt(0);
-    for(vv = 10; vv < 36; ++vv) BI_RC[rr++] = vv;
-    rr = "A".charCodeAt(0);
-    for(vv = 10; vv < 36; ++vv) BI_RC[rr++] = vv;
-
-    function int2char(n) { return BI_RM.charAt(n); }
-    function intAt(s,i) {
-      var c = BI_RC[s.charCodeAt(i)];
-      return (c==null)?-1:c;
-    }
-
-    // (protected) copy this to r
-    function bnpCopyTo(r) {
-      for(var i = this.t-1; i >= 0; --i) r[i] = this[i];
-      r.t = this.t;
-      r.s = this.s;
-    }
-
-    // (protected) set from integer value x, -DV <= x < DV
-    function bnpFromInt(x) {
-      this.t = 1;
-      this.s = (x<0)?-1:0;
-      if(x > 0) this[0] = x;
-      else if(x < -1) this[0] = x+this.DV;
-      else this.t = 0;
-    }
-
-    // return bigint initialized to value
-    function nbv(i) { var r = nbi(); r.fromInt(i); return r; }
-
-    // (protected) set from string and radix
-    function bnpFromString(s,b) {
-      var k;
-      if(b == 16) k = 4;
-      else if(b == 8) k = 3;
-      else if(b == 256) k = 8; // byte array
-      else if(b == 2) k = 1;
-      else if(b == 32) k = 5;
-      else if(b == 4) k = 2;
-      else { this.fromRadix(s,b); return; }
-      this.t = 0;
-      this.s = 0;
-      var i = s.length, mi = false, sh = 0;
-      while(--i >= 0) {
-        var x = (k==8)?s[i]&0xff:intAt(s,i);
-        if(x < 0) {
-          if(s.charAt(i) == "-") mi = true;
-          continue;
-        }
-        mi = false;
-        if(sh == 0)
-          this[this.t++] = x;
-        else if(sh+k > this.DB) {
-          this[this.t-1] |= (x&((1<<(this.DB-sh))-1))<<sh;
-          this[this.t++] = (x>>(this.DB-sh));
-        }
-        else
-          this[this.t-1] |= x<<sh;
-        sh += k;
-        if(sh >= this.DB) sh -= this.DB;
-      }
-      if(k == 8 && (s[0]&0x80) != 0) {
-        this.s = -1;
-        if(sh > 0) this[this.t-1] |= ((1<<(this.DB-sh))-1)<<sh;
-      }
-      this.clamp();
-      if(mi) BigInteger.ZERO.subTo(this,this);
-    }
-
-    // (protected) clamp off excess high words
-    function bnpClamp() {
-      var c = this.s&this.DM;
-      while(this.t > 0 && this[this.t-1] == c) --this.t;
-    }
-
-    // (public) return string representation in given radix
-    function bnToString(b) {
-      if(this.s < 0) return "-"+this.negate().toString(b);
-      var k;
-      if(b == 16) k = 4;
-      else if(b == 8) k = 3;
-      else if(b == 2) k = 1;
-      else if(b == 32) k = 5;
-      else if(b == 4) k = 2;
-      else return this.toRadix(b);
-      var km = (1<<k)-1, d, m = false, r = "", i = this.t;
-      var p = this.DB-(i*this.DB)%k;
-      if(i-- > 0) {
-        if(p < this.DB && (d = this[i]>>p) > 0) { m = true; r = int2char(d); }
-        while(i >= 0) {
-          if(p < k) {
-            d = (this[i]&((1<<p)-1))<<(k-p);
-            d |= this[--i]>>(p+=this.DB-k);
-          }
-          else {
-            d = (this[i]>>(p-=k))&km;
-            if(p <= 0) { p += this.DB; --i; }
-          }
-          if(d > 0) m = true;
-          if(m) r += int2char(d);
-        }
-      }
-      return m?r:"0";
-    }
-
-    // (public) -this
-    function bnNegate() { var r = nbi(); BigInteger.ZERO.subTo(this,r); return r; }
-
-    // (public) |this|
-    function bnAbs() { return (this.s<0)?this.negate():this; }
-
-    // (public) return + if this > a, - if this < a, 0 if equal
-    function bnCompareTo(a) {
-      var r = this.s-a.s;
-      if(r != 0) return r;
-      var i = this.t;
-      r = i-a.t;
-      if(r != 0) return (this.s<0)?-r:r;
-      while(--i >= 0) if((r=this[i]-a[i]) != 0) return r;
-      return 0;
-    }
-
-    // returns bit length of the integer x
-    function nbits(x) {
-      var r = 1, t;
-      if((t=x>>>16) != 0) { x = t; r += 16; }
-      if((t=x>>8) != 0) { x = t; r += 8; }
-      if((t=x>>4) != 0) { x = t; r += 4; }
-      if((t=x>>2) != 0) { x = t; r += 2; }
-      if((t=x>>1) != 0) { x = t; r += 1; }
-      return r;
-    }
-
-    // (public) return the number of bits in "this"
-    function bnBitLength() {
-      if(this.t <= 0) return 0;
-      return this.DB*(this.t-1)+nbits(this[this.t-1]^(this.s&this.DM));
-    }
-
-    // (protected) r = this << n*DB
-    function bnpDLShiftTo(n,r) {
-      var i;
-      for(i = this.t-1; i >= 0; --i) r[i+n] = this[i];
-      for(i = n-1; i >= 0; --i) r[i] = 0;
-      r.t = this.t+n;
-      r.s = this.s;
-    }
-
-    // (protected) r = this >> n*DB
-    function bnpDRShiftTo(n,r) {
-      for(var i = n; i < this.t; ++i) r[i-n] = this[i];
-      r.t = Math.max(this.t-n,0);
-      r.s = this.s;
-    }
-
-    // (protected) r = this << n
-    function bnpLShiftTo(n,r) {
-      var bs = n%this.DB;
-      var cbs = this.DB-bs;
-      var bm = (1<<cbs)-1;
-      var ds = Math.floor(n/this.DB), c = (this.s<<bs)&this.DM, i;
-      for(i = this.t-1; i >= 0; --i) {
-        r[i+ds+1] = (this[i]>>cbs)|c;
-        c = (this[i]&bm)<<bs;
-      }
-      for(i = ds-1; i >= 0; --i) r[i] = 0;
-      r[ds] = c;
-      r.t = this.t+ds+1;
-      r.s = this.s;
-      r.clamp();
-    }
-
-    // (protected) r = this >> n
-    function bnpRShiftTo(n,r) {
-      r.s = this.s;
-      var ds = Math.floor(n/this.DB);
-      if(ds >= this.t) { r.t = 0; return; }
-      var bs = n%this.DB;
-      var cbs = this.DB-bs;
-      var bm = (1<<bs)-1;
-      r[0] = this[ds]>>bs;
-      for(var i = ds+1; i < this.t; ++i) {
-        r[i-ds-1] |= (this[i]&bm)<<cbs;
-        r[i-ds] = this[i]>>bs;
-      }
-      if(bs > 0) r[this.t-ds-1] |= (this.s&bm)<<cbs;
-      r.t = this.t-ds;
-      r.clamp();
-    }
-
-    // (protected) r = this - a
-    function bnpSubTo(a,r) {
-      var i = 0, c = 0, m = Math.min(a.t,this.t);
-      while(i < m) {
-        c += this[i]-a[i];
-        r[i++] = c&this.DM;
-        c >>= this.DB;
-      }
-      if(a.t < this.t) {
-        c -= a.s;
-        while(i < this.t) {
-          c += this[i];
-          r[i++] = c&this.DM;
-          c >>= this.DB;
-        }
-        c += this.s;
-      }
-      else {
-        c += this.s;
-        while(i < a.t) {
-          c -= a[i];
-          r[i++] = c&this.DM;
-          c >>= this.DB;
-        }
-        c -= a.s;
-      }
-      r.s = (c<0)?-1:0;
-      if(c < -1) r[i++] = this.DV+c;
-      else if(c > 0) r[i++] = c;
-      r.t = i;
-      r.clamp();
-    }
-
-    // (protected) r = this * a, r != this,a (HAC 14.12)
-    // "this" should be the larger one if appropriate.
-    function bnpMultiplyTo(a,r) {
-      var x = this.abs(), y = a.abs();
-      var i = x.t;
-      r.t = i+y.t;
-      while(--i >= 0) r[i] = 0;
-      for(i = 0; i < y.t; ++i) r[i+x.t] = x.am(0,y[i],r,i,0,x.t);
-      r.s = 0;
-      r.clamp();
-      if(this.s != a.s) BigInteger.ZERO.subTo(r,r);
-    }
-
-    // (protected) r = this^2, r != this (HAC 14.16)
-    function bnpSquareTo(r) {
-      var x = this.abs();
-      var i = r.t = 2*x.t;
-      while(--i >= 0) r[i] = 0;
-      for(i = 0; i < x.t-1; ++i) {
-        var c = x.am(i,x[i],r,2*i,0,1);
-        if((r[i+x.t]+=x.am(i+1,2*x[i],r,2*i+1,c,x.t-i-1)) >= x.DV) {
-          r[i+x.t] -= x.DV;
-          r[i+x.t+1] = 1;
-        }
-      }
-      if(r.t > 0) r[r.t-1] += x.am(i,x[i],r,2*i,0,1);
-      r.s = 0;
-      r.clamp();
-    }
-
-    // (protected) divide this by m, quotient and remainder to q, r (HAC 14.20)
-    // r != q, this != m.  q or r may be null.
-    function bnpDivRemTo(m,q,r) {
-      var pm = m.abs();
-      if(pm.t <= 0) return;
-      var pt = this.abs();
-      if(pt.t < pm.t) {
-        if(q != null) q.fromInt(0);
-        if(r != null) this.copyTo(r);
-        return;
-      }
-      if(r == null) r = nbi();
-      var y = nbi(), ts = this.s, ms = m.s;
-      var nsh = this.DB-nbits(pm[pm.t-1]);   // normalize modulus
-      if(nsh > 0) { pm.lShiftTo(nsh,y); pt.lShiftTo(nsh,r); }
-      else { pm.copyTo(y); pt.copyTo(r); }
-      var ys = y.t;
-      var y0 = y[ys-1];
-      if(y0 == 0) return;
-      var yt = y0*(1<<this.F1)+((ys>1)?y[ys-2]>>this.F2:0);
-      var d1 = this.FV/yt, d2 = (1<<this.F1)/yt, e = 1<<this.F2;
-      var i = r.t, j = i-ys, t = (q==null)?nbi():q;
-      y.dlShiftTo(j,t);
-      if(r.compareTo(t) >= 0) {
-        r[r.t++] = 1;
-        r.subTo(t,r);
-      }
-      BigInteger.ONE.dlShiftTo(ys,t);
-      t.subTo(y,y);  // "negative" y so we can replace sub with am later
-      while(y.t < ys) y[y.t++] = 0;
-      while(--j >= 0) {
-        // Estimate quotient digit
-        var qd = (r[--i]==y0)?this.DM:Math.floor(r[i]*d1+(r[i-1]+e)*d2);
-        if((r[i]+=y.am(0,qd,r,j,0,ys)) < qd) {   // Try it out
-          y.dlShiftTo(j,t);
-          r.subTo(t,r);
-          while(r[i] < --qd) r.subTo(t,r);
-        }
-      }
-      if(q != null) {
-        r.drShiftTo(ys,q);
-        if(ts != ms) BigInteger.ZERO.subTo(q,q);
-      }
-      r.t = ys;
-      r.clamp();
-      if(nsh > 0) r.rShiftTo(nsh,r); // Denormalize remainder
-      if(ts < 0) BigInteger.ZERO.subTo(r,r);
-    }
-
-    // (public) this mod a
-    function bnMod(a) {
-      var r = nbi();
-      this.abs().divRemTo(a,null,r);
-      if(this.s < 0 && r.compareTo(BigInteger.ZERO) > 0) a.subTo(r,r);
-      return r;
-    }
-
-    // Modular reduction using "classic" algorithm
-    function Classic(m) { this.m = m; }
-    function cConvert(x) {
-      if(x.s < 0 || x.compareTo(this.m) >= 0) return x.mod(this.m);
-      else return x;
-    }
-    function cRevert(x) { return x; }
-    function cReduce(x) { x.divRemTo(this.m,null,x); }
-    function cMulTo(x,y,r) { x.multiplyTo(y,r); this.reduce(r); }
-    function cSqrTo(x,r) { x.squareTo(r); this.reduce(r); }
-
-    Classic.prototype.convert = cConvert;
-    Classic.prototype.revert = cRevert;
-    Classic.prototype.reduce = cReduce;
-    Classic.prototype.mulTo = cMulTo;
-    Classic.prototype.sqrTo = cSqrTo;
-
-    // (protected) return "-1/this % 2^DB"; useful for Mont. reduction
-    // justification:
-    //         xy == 1 (mod m)
-    //         xy =  1+km
-    //   xy(2-xy) = (1+km)(1-km)
-    // x[y(2-xy)] = 1-k^2m^2
-    // x[y(2-xy)] == 1 (mod m^2)
-    // if y is 1/x mod m, then y(2-xy) is 1/x mod m^2
-    // should reduce x and y(2-xy) by m^2 at each step to keep size bounded.
-    // JS multiply "overflows" differently from C/C++, so care is needed here.
-    function bnpInvDigit() {
-      if(this.t < 1) return 0;
-      var x = this[0];
-      if((x&1) == 0) return 0;
-      var y = x&3;       // y == 1/x mod 2^2
-      y = (y*(2-(x&0xf)*y))&0xf; // y == 1/x mod 2^4
-      y = (y*(2-(x&0xff)*y))&0xff;   // y == 1/x mod 2^8
-      y = (y*(2-(((x&0xffff)*y)&0xffff)))&0xffff;    // y == 1/x mod 2^16
-      // last step - calculate inverse mod DV directly;
-      // assumes 16 < DB <= 32 and assumes ability to handle 48-bit ints
-      y = (y*(2-x*y%this.DV))%this.DV;       // y == 1/x mod 2^dbits
-      // we really want the negative inverse, and -DV < y < DV
-      return (y>0)?this.DV-y:-y;
-    }
-
-    // Montgomery reduction
-    function Montgomery(m) {
-      this.m = m;
-      this.mp = m.invDigit();
-      this.mpl = this.mp&0x7fff;
-      this.mph = this.mp>>15;
-      this.um = (1<<(m.DB-15))-1;
-      this.mt2 = 2*m.t;
-    }
-
-    // xR mod m
-    function montConvert(x) {
-      var r = nbi();
-      x.abs().dlShiftTo(this.m.t,r);
-      r.divRemTo(this.m,null,r);
-      if(x.s < 0 && r.compareTo(BigInteger.ZERO) > 0) this.m.subTo(r,r);
-      return r;
-    }
-
-    // x/R mod m
-    function montRevert(x) {
-      var r = nbi();
-      x.copyTo(r);
-      this.reduce(r);
-      return r;
-    }
-
-    // x = x/R mod m (HAC 14.32)
-    function montReduce(x) {
-      while(x.t <= this.mt2) // pad x so am has enough room later
-        x[x.t++] = 0;
-      for(var i = 0; i < this.m.t; ++i) {
-        // faster way of calculating u0 = x[i]*mp mod DV
-        var j = x[i]&0x7fff;
-        var u0 = (j*this.mpl+(((j*this.mph+(x[i]>>15)*this.mpl)&this.um)<<15))&x.DM;
-        // use am to combine the multiply-shift-add into one call
-        j = i+this.m.t;
-        x[j] += this.m.am(0,u0,x,i,0,this.m.t);
-        // propagate carry
-        while(x[j] >= x.DV) { x[j] -= x.DV; x[++j]++; }
-      }
-      x.clamp();
-      x.drShiftTo(this.m.t,x);
-      if(x.compareTo(this.m) >= 0) x.subTo(this.m,x);
-    }
-
-    // r = "x^2/R mod m"; x != r
-    function montSqrTo(x,r) { x.squareTo(r); this.reduce(r); }
-
-    // r = "xy/R mod m"; x,y != r
-    function montMulTo(x,y,r) { x.multiplyTo(y,r); this.reduce(r); }
-
-    Montgomery.prototype.convert = montConvert;
-    Montgomery.prototype.revert = montRevert;
-    Montgomery.prototype.reduce = montReduce;
-    Montgomery.prototype.mulTo = montMulTo;
-    Montgomery.prototype.sqrTo = montSqrTo;
-
-    // (protected) true iff this is even
-    function bnpIsEven() { return ((this.t>0)?(this[0]&1):this.s) == 0; }
-
-    // (protected) this^e, e < 2^32, doing sqr and mul with "r" (HAC 14.79)
-    function bnpExp(e,z) {
-      if(e > 0xffffffff || e < 1) return BigInteger.ONE;
-      var r = nbi(), r2 = nbi(), g = z.convert(this), i = nbits(e)-1;
-      g.copyTo(r);
-      while(--i >= 0) {
-        z.sqrTo(r,r2);
-        if((e&(1<<i)) > 0) z.mulTo(r2,g,r);
-        else { var t = r; r = r2; r2 = t; }
-      }
-      return z.revert(r);
-    }
-
-    // (public) this^e % m, 0 <= e < 2^32
-    function bnModPowInt(e,m) {
-      var z;
-      if(e < 256 || m.isEven()) z = new Classic(m); else z = new Montgomery(m);
-      return this.exp(e,z);
-    }
-
-    // protected
-    BigInteger.prototype.copyTo = bnpCopyTo;
-    BigInteger.prototype.fromInt = bnpFromInt;
-    BigInteger.prototype.fromString = bnpFromString;
-    BigInteger.prototype.clamp = bnpClamp;
-    BigInteger.prototype.dlShiftTo = bnpDLShiftTo;
-    BigInteger.prototype.drShiftTo = bnpDRShiftTo;
-    BigInteger.prototype.lShiftTo = bnpLShiftTo;
-    BigInteger.prototype.rShiftTo = bnpRShiftTo;
-    BigInteger.prototype.subTo = bnpSubTo;
-    BigInteger.prototype.multiplyTo = bnpMultiplyTo;
-    BigInteger.prototype.squareTo = bnpSquareTo;
-    BigInteger.prototype.divRemTo = bnpDivRemTo;
-    BigInteger.prototype.invDigit = bnpInvDigit;
-    BigInteger.prototype.isEven = bnpIsEven;
-    BigInteger.prototype.exp = bnpExp;
-
-    // public
-    BigInteger.prototype.toString = bnToString;
-    BigInteger.prototype.negate = bnNegate;
-    BigInteger.prototype.abs = bnAbs;
-    BigInteger.prototype.compareTo = bnCompareTo;
-    BigInteger.prototype.bitLength = bnBitLength;
-    BigInteger.prototype.mod = bnMod;
-    BigInteger.prototype.modPowInt = bnModPowInt;
-
-    // "constants"
-    BigInteger.ZERO = nbv(0);
-    BigInteger.ONE = nbv(1);
-
-    // Copyright (c) 2005-2009  Tom Wu
-    // All Rights Reserved.
-    // See "LICENSE" for details.
-
-    // Extended JavaScript BN functions, required for RSA private ops.
-
-    // Version 1.1: new BigInteger("0", 10) returns "proper" zero
-    // Version 1.2: square() API, isProbablePrime fix
-
-    // (public)
-    function bnClone() { var r = nbi(); this.copyTo(r); return r; }
-
-    // (public) return value as integer
-    function bnIntValue() {
-      if(this.s < 0) {
-        if(this.t == 1) return this[0]-this.DV;
-        else if(this.t == 0) return -1;
-      }
-      else if(this.t == 1) return this[0];
-      else if(this.t == 0) return 0;
-      // assumes 16 < DB < 32
-      return ((this[1]&((1<<(32-this.DB))-1))<<this.DB)|this[0];
-    }
-
-    // (public) return value as byte
-    function bnByteValue() { return (this.t==0)?this.s:(this[0]<<24)>>24; }
-
-    // (public) return value as short (assumes DB>=16)
-    function bnShortValue() { return (this.t==0)?this.s:(this[0]<<16)>>16; }
-
-    // (protected) return x s.t. r^x < DV
-    function bnpChunkSize(r) { return Math.floor(Math.LN2*this.DB/Math.log(r)); }
-
-    // (public) 0 if this == 0, 1 if this > 0
-    function bnSigNum() {
-      if(this.s < 0) return -1;
-      else if(this.t <= 0 || (this.t == 1 && this[0] <= 0)) return 0;
-      else return 1;
-    }
-
-    // (protected) convert to radix string
-    function bnpToRadix(b) {
-      if(b == null) b = 10;
-      if(this.signum() == 0 || b < 2 || b > 36) return "0";
-      var cs = this.chunkSize(b);
-      var a = Math.pow(b,cs);
-      var d = nbv(a), y = nbi(), z = nbi(), r = "";
-      this.divRemTo(d,y,z);
-      while(y.signum() > 0) {
-        r = (a+z.intValue()).toString(b).substr(1) + r;
-        y.divRemTo(d,y,z);
-      }
-      return z.intValue().toString(b) + r;
-    }
-
-    // (protected) convert from radix string
-    function bnpFromRadix(s,b) {
-      this.fromInt(0);
-      if(b == null) b = 10;
-      var cs = this.chunkSize(b);
-      var d = Math.pow(b,cs), mi = false, j = 0, w = 0;
-      for(var i = 0; i < s.length; ++i) {
-        var x = intAt(s,i);
-        if(x < 0) {
-          if(s.charAt(i) == "-" && this.signum() == 0) mi = true;
-          continue;
-        }
-        w = b*w+x;
-        if(++j >= cs) {
-          this.dMultiply(d);
-          this.dAddOffset(w,0);
-          j = 0;
-          w = 0;
-        }
-      }
-      if(j > 0) {
-        this.dMultiply(Math.pow(b,j));
-        this.dAddOffset(w,0);
-      }
-      if(mi) BigInteger.ZERO.subTo(this,this);
-    }
-
-    // (protected) alternate constructor
-    function bnpFromNumber(a,b,c) {
-      if("number" == typeof b) {
-        // new BigInteger(int,int,RNG)
-        if(a < 2) this.fromInt(1);
-        else {
-          this.fromNumber(a,c);
-          if(!this.testBit(a-1))    // force MSB set
-            this.bitwiseTo(BigInteger.ONE.shiftLeft(a-1),op_or,this);
-          if(this.isEven()) this.dAddOffset(1,0); // force odd
-          while(!this.isProbablePrime(b)) {
-            this.dAddOffset(2,0);
-            if(this.bitLength() > a) this.subTo(BigInteger.ONE.shiftLeft(a-1),this);
-          }
-        }
-      }
-      else {
-        // new BigInteger(int,RNG)
-        var x = new Array(), t = a&7;
-        x.length = (a>>3)+1;
-        b.nextBytes(x);
-        if(t > 0) x[0] &= ((1<<t)-1); else x[0] = 0;
-        this.fromString(x,256);
-      }
-    }
-
-    // (public) convert to bigendian byte array
-    function bnToByteArray() {
-      var i = this.t, r = new Array();
-      r[0] = this.s;
-      var p = this.DB-(i*this.DB)%8, d, k = 0;
-      if(i-- > 0) {
-        if(p < this.DB && (d = this[i]>>p) != (this.s&this.DM)>>p)
-          r[k++] = d|(this.s<<(this.DB-p));
-        while(i >= 0) {
-          if(p < 8) {
-            d = (this[i]&((1<<p)-1))<<(8-p);
-            d |= this[--i]>>(p+=this.DB-8);
-          }
-          else {
-            d = (this[i]>>(p-=8))&0xff;
-            if(p <= 0) { p += this.DB; --i; }
-          }
-          if((d&0x80) != 0) d |= -256;
-          if(k == 0 && (this.s&0x80) != (d&0x80)) ++k;
-          if(k > 0 || d != this.s) r[k++] = d;
-        }
-      }
-      return r;
-    }
-
-    function bnEquals(a) { return(this.compareTo(a)==0); }
-    function bnMin(a) { return(this.compareTo(a)<0)?this:a; }
-    function bnMax(a) { return(this.compareTo(a)>0)?this:a; }
-
-    // (protected) r = this op a (bitwise)
-    function bnpBitwiseTo(a,op,r) {
-      var i, f, m = Math.min(a.t,this.t);
-      for(i = 0; i < m; ++i) r[i] = op(this[i],a[i]);
-      if(a.t < this.t) {
-        f = a.s&this.DM;
-        for(i = m; i < this.t; ++i) r[i] = op(this[i],f);
-        r.t = this.t;
-      }
-      else {
-        f = this.s&this.DM;
-        for(i = m; i < a.t; ++i) r[i] = op(f,a[i]);
-        r.t = a.t;
-      }
-      r.s = op(this.s,a.s);
-      r.clamp();
-    }
-
-    // (public) this & a
-    function op_and(x,y) { return x&y; }
-    function bnAnd(a) { var r = nbi(); this.bitwiseTo(a,op_and,r); return r; }
-
-    // (public) this | a
-    function op_or(x,y) { return x|y; }
-    function bnOr(a) { var r = nbi(); this.bitwiseTo(a,op_or,r); return r; }
-
-    // (public) this ^ a
-    function op_xor(x,y) { return x^y; }
-    function bnXor(a) { var r = nbi(); this.bitwiseTo(a,op_xor,r); return r; }
-
-    // (public) this & ~a
-    function op_andnot(x,y) { return x&~y; }
-    function bnAndNot(a) { var r = nbi(); this.bitwiseTo(a,op_andnot,r); return r; }
-
-    // (public) ~this
-    function bnNot() {
-      var r = nbi();
-      for(var i = 0; i < this.t; ++i) r[i] = this.DM&~this[i];
-      r.t = this.t;
-      r.s = ~this.s;
-      return r;
-    }
-
-    // (public) this << n
-    function bnShiftLeft(n) {
-      var r = nbi();
-      if(n < 0) this.rShiftTo(-n,r); else this.lShiftTo(n,r);
-      return r;
-    }
-
-    // (public) this >> n
-    function bnShiftRight(n) {
-      var r = nbi();
-      if(n < 0) this.lShiftTo(-n,r); else this.rShiftTo(n,r);
-      return r;
-    }
-
-    // return index of lowest 1-bit in x, x < 2^31
-    function lbit(x) {
-      if(x == 0) return -1;
-      var r = 0;
-      if((x&0xffff) == 0) { x >>= 16; r += 16; }
-      if((x&0xff) == 0) { x >>= 8; r += 8; }
-      if((x&0xf) == 0) { x >>= 4; r += 4; }
-      if((x&3) == 0) { x >>= 2; r += 2; }
-      if((x&1) == 0) ++r;
-      return r;
-    }
-
-    // (public) returns index of lowest 1-bit (or -1 if none)
-    function bnGetLowestSetBit() {
-      for(var i = 0; i < this.t; ++i)
-        if(this[i] != 0) return i*this.DB+lbit(this[i]);
-      if(this.s < 0) return this.t*this.DB;
-      return -1;
-    }
-
-    // return number of 1 bits in x
-    function cbit(x) {
-      var r = 0;
-      while(x != 0) { x &= x-1; ++r; }
-      return r;
-    }
-
-    // (public) return number of set bits
-    function bnBitCount() {
-      var r = 0, x = this.s&this.DM;
-      for(var i = 0; i < this.t; ++i) r += cbit(this[i]^x);
-      return r;
-    }
-
-    // (public) true iff nth bit is set
-    function bnTestBit(n) {
-      var j = Math.floor(n/this.DB);
-      if(j >= this.t) return(this.s!=0);
-      return((this[j]&(1<<(n%this.DB)))!=0);
-    }
-
-    // (protected) this op (1<<n)
-    function bnpChangeBit(n,op) {
-      var r = BigInteger.ONE.shiftLeft(n);
-      this.bitwiseTo(r,op,r);
-      return r;
-    }
-
-    // (public) this | (1<<n)
-    function bnSetBit(n) { return this.changeBit(n,op_or); }
-
-    // (public) this & ~(1<<n)
-    function bnClearBit(n) { return this.changeBit(n,op_andnot); }
-
-    // (public) this ^ (1<<n)
-    function bnFlipBit(n) { return this.changeBit(n,op_xor); }
-
-    // (protected) r = this + a
-    function bnpAddTo(a,r) {
-      var i = 0, c = 0, m = Math.min(a.t,this.t);
-      while(i < m) {
-        c += this[i]+a[i];
-        r[i++] = c&this.DM;
-        c >>= this.DB;
-      }
-      if(a.t < this.t) {
-        c += a.s;
-        while(i < this.t) {
-          c += this[i];
-          r[i++] = c&this.DM;
-          c >>= this.DB;
-        }
-        c += this.s;
-      }
-      else {
-        c += this.s;
-        while(i < a.t) {
-          c += a[i];
-          r[i++] = c&this.DM;
-          c >>= this.DB;
-        }
-        c += a.s;
-      }
-      r.s = (c<0)?-1:0;
-      if(c > 0) r[i++] = c;
-      else if(c < -1) r[i++] = this.DV+c;
-      r.t = i;
-      r.clamp();
-    }
-
-    // (public) this + a
-    function bnAdd(a) { var r = nbi(); this.addTo(a,r); return r; }
-
-    // (public) this - a
-    function bnSubtract(a) { var r = nbi(); this.subTo(a,r); return r; }
-
-    // (public) this * a
-    function bnMultiply(a) { var r = nbi(); this.multiplyTo(a,r); return r; }
-
-    // (public) this^2
-    function bnSquare() { var r = nbi(); this.squareTo(r); return r; }
-
-    // (public) this / a
-    function bnDivide(a) { var r = nbi(); this.divRemTo(a,r,null); return r; }
-
-    // (public) this % a
-    function bnRemainder(a) { var r = nbi(); this.divRemTo(a,null,r); return r; }
-
-    // (public) [this/a,this%a]
-    function bnDivideAndRemainder(a) {
-      var q = nbi(), r = nbi();
-      this.divRemTo(a,q,r);
-      return new Array(q,r);
-    }
-
-    // (protected) this *= n, this >= 0, 1 < n < DV
-    function bnpDMultiply(n) {
-      this[this.t] = this.am(0,n-1,this,0,0,this.t);
-      ++this.t;
-      this.clamp();
-    }
-
-    // (protected) this += n << w words, this >= 0
-    function bnpDAddOffset(n,w) {
-      if(n == 0) return;
-      while(this.t <= w) this[this.t++] = 0;
-      this[w] += n;
-      while(this[w] >= this.DV) {
-        this[w] -= this.DV;
-        if(++w >= this.t) this[this.t++] = 0;
-        ++this[w];
-      }
-    }
-
-    // A "null" reducer
-    function NullExp() {}
-    function nNop(x) { return x; }
-    function nMulTo(x,y,r) { x.multiplyTo(y,r); }
-    function nSqrTo(x,r) { x.squareTo(r); }
-
-    NullExp.prototype.convert = nNop;
-    NullExp.prototype.revert = nNop;
-    NullExp.prototype.mulTo = nMulTo;
-    NullExp.prototype.sqrTo = nSqrTo;
-
-    // (public) this^e
-    function bnPow(e) { return this.exp(e,new NullExp()); }
-
-    // (protected) r = lower n words of "this * a", a.t <= n
-    // "this" should be the larger one if appropriate.
-    function bnpMultiplyLowerTo(a,n,r) {
-      var i = Math.min(this.t+a.t,n);
-      r.s = 0; // assumes a,this >= 0
-      r.t = i;
-      while(i > 0) r[--i] = 0;
-      var j;
-      for(j = r.t-this.t; i < j; ++i) r[i+this.t] = this.am(0,a[i],r,i,0,this.t);
-      for(j = Math.min(a.t,n); i < j; ++i) this.am(0,a[i],r,i,0,n-i);
-      r.clamp();
-    }
-
-    // (protected) r = "this * a" without lower n words, n > 0
-    // "this" should be the larger one if appropriate.
-    function bnpMultiplyUpperTo(a,n,r) {
-      --n;
-      var i = r.t = this.t+a.t-n;
-      r.s = 0; // assumes a,this >= 0
-      while(--i >= 0) r[i] = 0;
-      for(i = Math.max(n-this.t,0); i < a.t; ++i)
-        r[this.t+i-n] = this.am(n-i,a[i],r,0,0,this.t+i-n);
-      r.clamp();
-      r.drShiftTo(1,r);
-    }
-
-    // Barrett modular reduction
-    function Barrett(m) {
-      // setup Barrett
-      this.r2 = nbi();
-      this.q3 = nbi();
-      BigInteger.ONE.dlShiftTo(2*m.t,this.r2);
-      this.mu = this.r2.divide(m);
-      this.m = m;
-    }
-
-    function barrettConvert(x) {
-      if(x.s < 0 || x.t > 2*this.m.t) return x.mod(this.m);
-      else if(x.compareTo(this.m) < 0) return x;
-      else { var r = nbi(); x.copyTo(r); this.reduce(r); return r; }
-    }
-
-    function barrettRevert(x) { return x; }
-
-    // x = x mod m (HAC 14.42)
-    function barrettReduce(x) {
-      x.drShiftTo(this.m.t-1,this.r2);
-      if(x.t > this.m.t+1) { x.t = this.m.t+1; x.clamp(); }
-      this.mu.multiplyUpperTo(this.r2,this.m.t+1,this.q3);
-      this.m.multiplyLowerTo(this.q3,this.m.t+1,this.r2);
-      while(x.compareTo(this.r2) < 0) x.dAddOffset(1,this.m.t+1);
-      x.subTo(this.r2,x);
-      while(x.compareTo(this.m) >= 0) x.subTo(this.m,x);
-    }
-
-    // r = x^2 mod m; x != r
-    function barrettSqrTo(x,r) { x.squareTo(r); this.reduce(r); }
-
-    // r = x*y mod m; x,y != r
-    function barrettMulTo(x,y,r) { x.multiplyTo(y,r); this.reduce(r); }
-
-    Barrett.prototype.convert = barrettConvert;
-    Barrett.prototype.revert = barrettRevert;
-    Barrett.prototype.reduce = barrettReduce;
-    Barrett.prototype.mulTo = barrettMulTo;
-    Barrett.prototype.sqrTo = barrettSqrTo;
-
-    // (public) this^e % m (HAC 14.85)
-    function bnModPow(e,m) {
-      var i = e.bitLength(), k, r = nbv(1), z;
-      if(i <= 0) return r;
-      else if(i < 18) k = 1;
-      else if(i < 48) k = 3;
-      else if(i < 144) k = 4;
-      else if(i < 768) k = 5;
-      else k = 6;
-      if(i < 8)
-        z = new Classic(m);
-      else if(m.isEven())
-        z = new Barrett(m);
-      else
-        z = new Montgomery(m);
-
-      // precomputation
-      var g = new Array(), n = 3, k1 = k-1, km = (1<<k)-1;
-      g[1] = z.convert(this);
-      if(k > 1) {
-        var g2 = nbi();
-        z.sqrTo(g[1],g2);
-        while(n <= km) {
-          g[n] = nbi();
-          z.mulTo(g2,g[n-2],g[n]);
-          n += 2;
-        }
-      }
-
-      var j = e.t-1, w, is1 = true, r2 = nbi(), t;
-      i = nbits(e[j])-1;
-      while(j >= 0) {
-        if(i >= k1) w = (e[j]>>(i-k1))&km;
-        else {
-          w = (e[j]&((1<<(i+1))-1))<<(k1-i);
-          if(j > 0) w |= e[j-1]>>(this.DB+i-k1);
-        }
-
-        n = k;
-        while((w&1) == 0) { w >>= 1; --n; }
-        if((i -= n) < 0) { i += this.DB; --j; }
-        if(is1) {    // ret == 1, don't bother squaring or multiplying it
-          g[w].copyTo(r);
-          is1 = false;
-        }
-        else {
-          while(n > 1) { z.sqrTo(r,r2); z.sqrTo(r2,r); n -= 2; }
-          if(n > 0) z.sqrTo(r,r2); else { t = r; r = r2; r2 = t; }
-          z.mulTo(r2,g[w],r);
-        }
-
-        while(j >= 0 && (e[j]&(1<<i)) == 0) {
-          z.sqrTo(r,r2); t = r; r = r2; r2 = t;
-          if(--i < 0) { i = this.DB-1; --j; }
-        }
-      }
-      return z.revert(r);
-    }
-
-    // (public) gcd(this,a) (HAC 14.54)
-    function bnGCD(a) {
-      var x = (this.s<0)?this.negate():this.clone();
-      var y = (a.s<0)?a.negate():a.clone();
-      if(x.compareTo(y) < 0) { var t = x; x = y; y = t; }
-      var i = x.getLowestSetBit(), g = y.getLowestSetBit();
-      if(g < 0) return x;
-      if(i < g) g = i;
-      if(g > 0) {
-        x.rShiftTo(g,x);
-        y.rShiftTo(g,y);
-      }
-      while(x.signum() > 0) {
-        if((i = x.getLowestSetBit()) > 0) x.rShiftTo(i,x);
-        if((i = y.getLowestSetBit()) > 0) y.rShiftTo(i,y);
-        if(x.compareTo(y) >= 0) {
-          x.subTo(y,x);
-          x.rShiftTo(1,x);
-        }
-        else {
-          y.subTo(x,y);
-          y.rShiftTo(1,y);
-        }
-      }
-      if(g > 0) y.lShiftTo(g,y);
-      return y;
-    }
-
-    // (protected) this % n, n < 2^26
-    function bnpModInt(n) {
-      if(n <= 0) return 0;
-      var d = this.DV%n, r = (this.s<0)?n-1:0;
-      if(this.t > 0)
-        if(d == 0) r = this[0]%n;
-        else for(var i = this.t-1; i >= 0; --i) r = (d*r+this[i])%n;
-      return r;
-    }
-
-    // (public) 1/this % m (HAC 14.61)
-    function bnModInverse(m) {
-      var ac = m.isEven();
-      if((this.isEven() && ac) || m.signum() == 0) return BigInteger.ZERO;
-      var u = m.clone(), v = this.clone();
-      var a = nbv(1), b = nbv(0), c = nbv(0), d = nbv(1);
-      while(u.signum() != 0) {
-        while(u.isEven()) {
-          u.rShiftTo(1,u);
-          if(ac) {
-            if(!a.isEven() || !b.isEven()) { a.addTo(this,a); b.subTo(m,b); }
-            a.rShiftTo(1,a);
-          }
-          else if(!b.isEven()) b.subTo(m,b);
-          b.rShiftTo(1,b);
-        }
-        while(v.isEven()) {
-          v.rShiftTo(1,v);
-          if(ac) {
-            if(!c.isEven() || !d.isEven()) { c.addTo(this,c); d.subTo(m,d); }
-            c.rShiftTo(1,c);
-          }
-          else if(!d.isEven()) d.subTo(m,d);
-          d.rShiftTo(1,d);
-        }
-        if(u.compareTo(v) >= 0) {
-          u.subTo(v,u);
-          if(ac) a.subTo(c,a);
-          b.subTo(d,b);
-        }
-        else {
-          v.subTo(u,v);
-          if(ac) c.subTo(a,c);
-          d.subTo(b,d);
-        }
-      }
-      if(v.compareTo(BigInteger.ONE) != 0) return BigInteger.ZERO;
-      if(d.compareTo(m) >= 0) return d.subtract(m);
-      if(d.signum() < 0) d.addTo(m,d); else return d;
-      if(d.signum() < 0) return d.add(m); else return d;
-    }
-
-    var lowprimes = [2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,83,89,97,101,103,107,109,113,127,131,137,139,149,151,157,163,167,173,179,181,191,193,197,199,211,223,227,229,233,239,241,251,257,263,269,271,277,281,283,293,307,311,313,317,331,337,347,349,353,359,367,373,379,383,389,397,401,409,419,421,431,433,439,443,449,457,461,463,467,479,487,491,499,503,509,521,523,541,547,557,563,569,571,577,587,593,599,601,607,613,617,619,631,641,643,647,653,659,661,673,677,683,691,701,709,719,727,733,739,743,751,757,761,769,773,787,797,809,811,821,823,827,829,839,853,857,859,863,877,881,883,887,907,911,919,929,937,941,947,953,967,971,977,983,991,997];
-    var lplim = (1<<26)/lowprimes[lowprimes.length-1];
-
-    // (public) test primality with certainty >= 1-.5^t
-    function bnIsProbablePrime(t) {
-      var i, x = this.abs();
-      if(x.t == 1 && x[0] <= lowprimes[lowprimes.length-1]) {
-        for(i = 0; i < lowprimes.length; ++i)
-          if(x[0] == lowprimes[i]) return true;
-        return false;
-      }
-      if(x.isEven()) return false;
-      i = 1;
-      while(i < lowprimes.length) {
-        var m = lowprimes[i], j = i+1;
-        while(j < lowprimes.length && m < lplim) m *= lowprimes[j++];
-        m = x.modInt(m);
-        while(i < j) if(m%lowprimes[i++] == 0) return false;
-      }
-      return x.millerRabin(t);
-    }
-
-    // (protected) true if probably prime (HAC 4.24, Miller-Rabin)
-    function bnpMillerRabin(t) {
-      var n1 = this.subtract(BigInteger.ONE);
-      var k = n1.getLowestSetBit();
-      if(k <= 0) return false;
-      var r = n1.shiftRight(k);
-      t = (t+1)>>1;
-      if(t > lowprimes.length) t = lowprimes.length;
-      var a = nbi();
-      for(var i = 0; i < t; ++i) {
-        //Pick bases at random, instead of starting at 2
-        a.fromInt(lowprimes[Math.floor(Math.random()*lowprimes.length)]);
-        var y = a.modPow(r,this);
-        if(y.compareTo(BigInteger.ONE) != 0 && y.compareTo(n1) != 0) {
-          var j = 1;
-          while(j++ < k && y.compareTo(n1) != 0) {
-            y = y.modPowInt(2,this);
-            if(y.compareTo(BigInteger.ONE) == 0) return false;
-          }
-          if(y.compareTo(n1) != 0) return false;
-        }
-      }
-      return true;
-    }
-
-    // protected
-    BigInteger.prototype.chunkSize = bnpChunkSize;
-    BigInteger.prototype.toRadix = bnpToRadix;
-    BigInteger.prototype.fromRadix = bnpFromRadix;
-    BigInteger.prototype.fromNumber = bnpFromNumber;
-    BigInteger.prototype.bitwiseTo = bnpBitwiseTo;
-    BigInteger.prototype.changeBit = bnpChangeBit;
-    BigInteger.prototype.addTo = bnpAddTo;
-    BigInteger.prototype.dMultiply = bnpDMultiply;
-    BigInteger.prototype.dAddOffset = bnpDAddOffset;
-    BigInteger.prototype.multiplyLowerTo = bnpMultiplyLowerTo;
-    BigInteger.prototype.multiplyUpperTo = bnpMultiplyUpperTo;
-    BigInteger.prototype.modInt = bnpModInt;
-    BigInteger.prototype.millerRabin = bnpMillerRabin;
-
-    // public
-    BigInteger.prototype.clone = bnClone;
-    BigInteger.prototype.intValue = bnIntValue;
-    BigInteger.prototype.byteValue = bnByteValue;
-    BigInteger.prototype.shortValue = bnShortValue;
-    BigInteger.prototype.signum = bnSigNum;
-    BigInteger.prototype.toByteArray = bnToByteArray;
-    BigInteger.prototype.equals = bnEquals;
-    BigInteger.prototype.min = bnMin;
-    BigInteger.prototype.max = bnMax;
-    BigInteger.prototype.and = bnAnd;
-    BigInteger.prototype.or = bnOr;
-    BigInteger.prototype.xor = bnXor;
-    BigInteger.prototype.andNot = bnAndNot;
-    BigInteger.prototype.not = bnNot;
-    BigInteger.prototype.shiftLeft = bnShiftLeft;
-    BigInteger.prototype.shiftRight = bnShiftRight;
-    BigInteger.prototype.getLowestSetBit = bnGetLowestSetBit;
-    BigInteger.prototype.bitCount = bnBitCount;
-    BigInteger.prototype.testBit = bnTestBit;
-    BigInteger.prototype.setBit = bnSetBit;
-    BigInteger.prototype.clearBit = bnClearBit;
-    BigInteger.prototype.flipBit = bnFlipBit;
-    BigInteger.prototype.add = bnAdd;
-    BigInteger.prototype.subtract = bnSubtract;
-    BigInteger.prototype.multiply = bnMultiply;
-    BigInteger.prototype.divide = bnDivide;
-    BigInteger.prototype.remainder = bnRemainder;
-    BigInteger.prototype.divideAndRemainder = bnDivideAndRemainder;
-    BigInteger.prototype.modPow = bnModPow;
-    BigInteger.prototype.modInverse = bnModInverse;
-    BigInteger.prototype.pow = bnPow;
-    BigInteger.prototype.gcd = bnGCD;
-    BigInteger.prototype.isProbablePrime = bnIsProbablePrime;
-
-    // JSBN-specific extension
-    BigInteger.prototype.square = bnSquare;
-
-    // Expose the Barrett function
-    BigInteger.prototype.Barrett = Barrett
-
-    // BigInteger interfaces not implemented in jsbn:
-
-    // BigInteger(int signum, byte[] magnitude)
-    // double doubleValue()
-    // float floatValue()
-    // int hashCode()
-    // long longValue()
-    // static BigInteger valueOf(long val)
-
-    // Random number generator - requires a PRNG backend, e.g. prng4.js
-
-    // For best results, put code like
-    // <body onClick='rng_seed_time();' onKeyPress='rng_seed_time();'>
-    // in your main HTML document.
-
-    var rng_state;
-    var rng_pool;
-    var rng_pptr;
-
-    // Mix in a 32-bit integer into the pool
-    function rng_seed_int(x) {
-      rng_pool[rng_pptr++] ^= x & 255;
-      rng_pool[rng_pptr++] ^= (x >> 8) & 255;
-      rng_pool[rng_pptr++] ^= (x >> 16) & 255;
-      rng_pool[rng_pptr++] ^= (x >> 24) & 255;
-      if(rng_pptr >= rng_psize) rng_pptr -= rng_psize;
-    }
-
-    // Mix in the current time (w/milliseconds) into the pool
-    function rng_seed_time() {
-      rng_seed_int(new Date().getTime());
-    }
-
-    // Initialize the pool with junk if needed.
-    if(rng_pool == null) {
-      rng_pool = new Array();
-      rng_pptr = 0;
-      var t;
-      if(typeof window !== "undefined" && window.crypto) {
-        if (window.crypto.getRandomValues) {
-          // Use webcrypto if available
-          var ua = new Uint8Array(32);
-          window.crypto.getRandomValues(ua);
-          for(t = 0; t < 32; ++t)
-            rng_pool[rng_pptr++] = ua[t];
-        }
-        else if(navigator.appName == "Netscape" && navigator.appVersion < "5") {
-          // Extract entropy (256 bits) from NS4 RNG if available
-          var z = window.crypto.random(32);
-          for(t = 0; t < z.length; ++t)
-            rng_pool[rng_pptr++] = z.charCodeAt(t) & 255;
-        }
-      }
-      while(rng_pptr < rng_psize) {  // extract some randomness from Math.random()
-        t = Math.floor(65536 * Math.random());
-        rng_pool[rng_pptr++] = t >>> 8;
-        rng_pool[rng_pptr++] = t & 255;
-      }
-      rng_pptr = 0;
-      rng_seed_time();
-      //rng_seed_int(window.screenX);
-      //rng_seed_int(window.screenY);
-    }
-
-    function rng_get_byte() {
-      if(rng_state == null) {
-        rng_seed_time();
-        rng_state = prng_newstate();
-        rng_state.init(rng_pool);
-        for(rng_pptr = 0; rng_pptr < rng_pool.length; ++rng_pptr)
-          rng_pool[rng_pptr] = 0;
-        rng_pptr = 0;
-        //rng_pool = null;
-      }
-      // TODO: allow reseeding after first request
-      return rng_state.next();
-    }
-
-    function rng_get_bytes(ba) {
-      var i;
-      for(i = 0; i < ba.length; ++i) ba[i] = rng_get_byte();
-    }
-
-    function SecureRandom() {}
-
-    SecureRandom.prototype.nextBytes = rng_get_bytes;
-
-    // prng4.js - uses Arcfour as a PRNG
-
-    function Arcfour() {
-      this.i = 0;
-      this.j = 0;
-      this.S = new Array();
-    }
-
-    // Initialize arcfour context from key, an array of ints, each from [0..255]
-    function ARC4init(key) {
-      var i, j, t;
-      for(i = 0; i < 256; ++i)
-        this.S[i] = i;
-      j = 0;
-      for(i = 0; i < 256; ++i) {
-        j = (j + this.S[i] + key[i % key.length]) & 255;
-        t = this.S[i];
-        this.S[i] = this.S[j];
-        this.S[j] = t;
-      }
-      this.i = 0;
-      this.j = 0;
-    }
-
-    function ARC4next() {
-      var t;
-      this.i = (this.i + 1) & 255;
-      this.j = (this.j + this.S[this.i]) & 255;
-      t = this.S[this.i];
-      this.S[this.i] = this.S[this.j];
-      this.S[this.j] = t;
-      return this.S[(t + this.S[this.i]) & 255];
-    }
-
-    Arcfour.prototype.init = ARC4init;
-    Arcfour.prototype.next = ARC4next;
-
-    // Plug in your RNG constructor here
-    function prng_newstate() {
-      return new Arcfour();
-    }
-
-    // Pool size must be a multiple of 4 and greater than 32.
-    // An array of bytes the size of the pool will be passed to init()
-    var rng_psize = 256;
-
-    if (true) {
-        exports = module.exports = {
-            default: BigInteger,
-            BigInteger: BigInteger,
-            SecureRandom: SecureRandom,
-        };
-    } else {}
-
-}).call(this);
+})
 
 
 /***/ }),
@@ -49135,122 +44366,6 @@ parseJson.noExceptions = (txt, reviver) => {
 
 /***/ }),
 
-/***/ 92064:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-let _fs
-try {
-  _fs = __nccwpck_require__(35744)
-} catch (_) {
-  _fs = __nccwpck_require__(79896)
-}
-const universalify = __nccwpck_require__(95077)
-const { stringify, stripBom } = __nccwpck_require__(79449)
-
-async function _readFile (file, options = {}) {
-  if (typeof options === 'string') {
-    options = { encoding: options }
-  }
-
-  const fs = options.fs || _fs
-
-  const shouldThrow = 'throws' in options ? options.throws : true
-
-  let data = await universalify.fromCallback(fs.readFile)(file, options)
-
-  data = stripBom(data)
-
-  let obj
-  try {
-    obj = JSON.parse(data, options ? options.reviver : null)
-  } catch (err) {
-    if (shouldThrow) {
-      err.message = `${file}: ${err.message}`
-      throw err
-    } else {
-      return null
-    }
-  }
-
-  return obj
-}
-
-const readFile = universalify.fromPromise(_readFile)
-
-function readFileSync (file, options = {}) {
-  if (typeof options === 'string') {
-    options = { encoding: options }
-  }
-
-  const fs = options.fs || _fs
-
-  const shouldThrow = 'throws' in options ? options.throws : true
-
-  try {
-    let content = fs.readFileSync(file, options)
-    content = stripBom(content)
-    return JSON.parse(content, options.reviver)
-  } catch (err) {
-    if (shouldThrow) {
-      err.message = `${file}: ${err.message}`
-      throw err
-    } else {
-      return null
-    }
-  }
-}
-
-async function _writeFile (file, obj, options = {}) {
-  const fs = options.fs || _fs
-
-  const str = stringify(obj, options)
-
-  await universalify.fromCallback(fs.writeFile)(file, str, options)
-}
-
-const writeFile = universalify.fromPromise(_writeFile)
-
-function writeFileSync (file, obj, options = {}) {
-  const fs = options.fs || _fs
-
-  const str = stringify(obj, options)
-  // not sure if fs.writeFileSync returns anything, but just in case
-  return fs.writeFileSync(file, str, options)
-}
-
-const jsonfile = {
-  readFile,
-  readFileSync,
-  writeFile,
-  writeFileSync
-}
-
-module.exports = jsonfile
-
-
-/***/ }),
-
-/***/ 79449:
-/***/ ((module) => {
-
-function stringify (obj, { EOL = '\n', finalEOL = true, replacer = null, spaces } = {}) {
-  const EOF = finalEOL ? EOL : ''
-  const str = JSON.stringify(obj, replacer, spaces)
-
-  return str.replace(/\n/g, EOL) + EOF
-}
-
-function stripBom (content) {
-  // we do this because JSON.parse would convert it to a utf8 string if encoding wasn't specified
-  if (Buffer.isBuffer(content)) content = content.toString('utf8')
-  return content.replace(/^\uFEFF/, '')
-}
-
-module.exports = { stringify, stripBom }
-
-
-/***/ }),
-
 /***/ 61402:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -49358,7 +44473,7 @@ var y = d * 365.25;
  * @api public
  */
 
-module.exports = function(val, options) {
+module.exports = function (val, options) {
   options = options || {};
   var type = typeof val;
   if (type === 'string' && val.length > 0) {
@@ -49499,217 +44614,470 @@ function plural(ms, msAbs, n, name) {
 
 /***/ }),
 
-/***/ 35192:
-/***/ (function(__unused_webpack_module, exports) {
+/***/ 78755:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
-// Generated by CoffeeScript 1.12.7
-(function() {
-  var Netmask, atob, chr, chr0, chrA, chra, ip2long, long2ip;
+"use strict";
 
-  long2ip = function(long) {
-    var a, b, c, d;
-    a = (long & (0xff << 24)) >>> 24;
-    b = (long & (0xff << 16)) >>> 16;
-    c = (long & (0xff << 8)) >>> 8;
-    d = long & 0xff;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.long2ip = exports.ip2long = exports.Netmask = void 0;
+const netmask4_1 = __nccwpck_require__(51783);
+Object.defineProperty(exports, "ip2long", ({ enumerable: true, get: function () { return netmask4_1.ip2long; } }));
+Object.defineProperty(exports, "long2ip", ({ enumerable: true, get: function () { return netmask4_1.long2ip; } }));
+const netmask6_1 = __nccwpck_require__(95273);
+class Netmask {
+    constructor(net, mask) {
+        if (typeof net !== 'string') {
+            throw new Error("Missing `net' parameter");
+        }
+        // Detect IPv6: check the address part (before any /) for ':'
+        const addrPart = net.indexOf('/') !== -1 ? net.substring(0, net.indexOf('/')) : net;
+        if (addrPart.indexOf(':') !== -1) {
+            this._impl = new netmask6_1.Netmask6Impl(net, mask);
+        }
+        else {
+            this._impl = new netmask4_1.Netmask4Impl(net, mask);
+        }
+        this.base = this._impl.base;
+        this.mask = this._impl.mask;
+        this.hostmask = this._impl.hostmask;
+        this.bitmask = this._impl.bitmask;
+        this.size = this._impl.size;
+        this.first = this._impl.first;
+        this.last = this._impl.last;
+        this.broadcast = this._impl.broadcast;
+        if (this._impl instanceof netmask4_1.Netmask4Impl) {
+            this.maskLong = this._impl.maskLong;
+            this.netLong = this._impl.netLong;
+        }
+        else {
+            this.maskLong = 0;
+            this.netLong = 0;
+        }
+    }
+    contains(ip) {
+        if (typeof ip === 'string') {
+            // If it has a '/', it's a CIDR block — wrap it
+            if (ip.indexOf('/') > 0) {
+                ip = new Netmask(ip);
+            }
+            // IPv4 shorthand (fewer than 4 octets, no colons) — wrap it
+            else if (ip.indexOf(':') === -1 && ip.split('.').length !== 4) {
+                ip = new Netmask(ip);
+            }
+        }
+        if (ip instanceof Netmask) {
+            return this.contains(ip.base) && this.contains(ip.broadcast || ip.last);
+        }
+        // Plain IP string — delegate to impl
+        return this._impl.contains(ip);
+    }
+    next(count = 1) {
+        const nextImpl = this._impl.next(count);
+        const result = new Netmask(nextImpl.base, nextImpl.bitmask);
+        return result;
+    }
+    /** @deprecated */
+    forEach(fn) {
+        this._impl.forEach(fn);
+    }
+    toString() {
+        return this._impl.toString();
+    }
+}
+exports.Netmask = Netmask;
+
+
+/***/ }),
+
+/***/ 51783:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.Netmask4Impl = void 0;
+exports.ip2long = ip2long;
+exports.long2ip = long2ip;
+function long2ip(long) {
+    const a = (long & (0xff << 24)) >>> 24;
+    const b = (long & (0xff << 16)) >>> 16;
+    const c = (long & (0xff << 8)) >>> 8;
+    const d = long & 0xff;
     return [a, b, c, d].join('.');
-  };
-
-  ip2long = function(ip) {
-    var b, c, i, j, n, ref;
-    b = [];
-    for (i = j = 0; j <= 3; i = ++j) {
-      if (ip.length === 0) {
-        break;
-      }
-      if (i > 0) {
-        if (ip[0] !== '.') {
-          throw new Error('Invalid IP');
-        }
-        ip = ip.substring(1);
-      }
-      ref = atob(ip), n = ref[0], c = ref[1];
-      ip = ip.substring(c);
-      b.push(n);
-    }
-    if (ip.length !== 0) {
-      throw new Error('Invalid IP');
-    }
-    switch (b.length) {
-      case 1:
-        if (b[0] > 0xFFFFFFFF) {
-          throw new Error('Invalid IP');
-        }
-        return b[0] >>> 0;
-      case 2:
-        if (b[0] > 0xFF || b[1] > 0xFFFFFF) {
-          throw new Error('Invalid IP');
-        }
-        return (b[0] << 24 | b[1]) >>> 0;
-      case 3:
-        if (b[0] > 0xFF || b[1] > 0xFF || b[2] > 0xFFFF) {
-          throw new Error('Invalid IP');
-        }
-        return (b[0] << 24 | b[1] << 16 | b[2]) >>> 0;
-      case 4:
-        if (b[0] > 0xFF || b[1] > 0xFF || b[2] > 0xFF || b[3] > 0xFF) {
-          throw new Error('Invalid IP');
-        }
-        return (b[0] << 24 | b[1] << 16 | b[2] << 8 | b[3]) >>> 0;
-      default:
-        throw new Error('Invalid IP');
-    }
-  };
-
-  chr = function(b) {
-    return b.charCodeAt(0);
-  };
-
-  chr0 = chr('0');
-
-  chra = chr('a');
-
-  chrA = chr('A');
-
-  atob = function(s) {
-    var base, dmax, i, n, start;
-    n = 0;
-    base = 10;
-    dmax = '9';
-    i = 0;
+}
+const chr0 = '0'.charCodeAt(0);
+const chra = 'a'.charCodeAt(0);
+const chrA = 'A'.charCodeAt(0);
+function parseNum(s) {
+    let n = 0;
+    let base = 10;
+    let dmax = '9';
+    let i = 0;
     if (s.length > 1 && s[i] === '0') {
-      if (s[i + 1] === 'x' || s[i + 1] === 'X') {
-        i += 2;
-        base = 16;
-      } else if ('0' <= s[i + 1] && s[i + 1] <= '9') {
-        i++;
-        base = 8;
-        dmax = '7';
-      }
-    }
-    start = i;
-    while (i < s.length) {
-      if ('0' <= s[i] && s[i] <= dmax) {
-        n = (n * base + (chr(s[i]) - chr0)) >>> 0;
-      } else if (base === 16) {
-        if ('a' <= s[i] && s[i] <= 'f') {
-          n = (n * base + (10 + chr(s[i]) - chra)) >>> 0;
-        } else if ('A' <= s[i] && s[i] <= 'F') {
-          n = (n * base + (10 + chr(s[i]) - chrA)) >>> 0;
-        } else {
-          break;
+        if (s[i + 1] === 'x' || s[i + 1] === 'X') {
+            i += 2;
+            base = 16;
         }
-      } else {
-        break;
-      }
-      if (n > 0xFFFFFFFF) {
-        throw new Error('too large');
-      }
-      i++;
+        else if ('0' <= s[i + 1] && s[i + 1] <= '9') {
+            i++;
+            base = 8;
+            dmax = '7';
+        }
+    }
+    const start = i;
+    while (i < s.length) {
+        if ('0' <= s[i] && s[i] <= dmax) {
+            n = (n * base + (s.charCodeAt(i) - chr0)) >>> 0;
+        }
+        else if (base === 16) {
+            if ('a' <= s[i] && s[i] <= 'f') {
+                n = (n * base + (10 + s.charCodeAt(i) - chra)) >>> 0;
+            }
+            else if ('A' <= s[i] && s[i] <= 'F') {
+                n = (n * base + (10 + s.charCodeAt(i) - chrA)) >>> 0;
+            }
+            else {
+                break;
+            }
+        }
+        else {
+            break;
+        }
+        if (n > 0xFFFFFFFF) {
+            throw new Error('too large');
+        }
+        i++;
     }
     if (i === start) {
-      throw new Error('empty octet');
+        throw new Error('empty octet');
     }
     return [n, i];
-  };
-
-  Netmask = (function() {
-    function Netmask(net, mask) {
-      var error, i, j, ref;
-      if (typeof net !== 'string') {
-        throw new Error("Missing `net' parameter");
-      }
-      if (!mask) {
-        ref = net.split('/', 2), net = ref[0], mask = ref[1];
-      }
-      if (!mask) {
-        mask = 32;
-      }
-      if (typeof mask === 'string' && mask.indexOf('.') > -1) {
-        try {
-          this.maskLong = ip2long(mask);
-        } catch (error1) {
-          error = error1;
-          throw new Error("Invalid mask: " + mask);
-        }
-        for (i = j = 32; j >= 0; i = --j) {
-          if (this.maskLong === (0xffffffff << (32 - i)) >>> 0) {
-            this.bitmask = i;
+}
+function ip2long(ip) {
+    const b = [];
+    for (let i = 0; i <= 3; i++) {
+        if (ip.length === 0) {
             break;
-          }
         }
-      } else if (mask || mask === 0) {
-        this.bitmask = parseInt(mask, 10);
-        this.maskLong = 0;
-        if (this.bitmask > 0) {
-          this.maskLong = (0xffffffff << (32 - this.bitmask)) >>> 0;
+        if (i > 0) {
+            if (ip[0] !== '.') {
+                throw new Error('Invalid IP');
+            }
+            ip = ip.substring(1);
         }
-      } else {
-        throw new Error("Invalid mask: empty");
-      }
-      try {
-        this.netLong = (ip2long(net) & this.maskLong) >>> 0;
-      } catch (error1) {
-        error = error1;
-        throw new Error("Invalid net address: " + net);
-      }
-      if (!(this.bitmask <= 32)) {
-        throw new Error("Invalid mask for ip4: " + mask);
-      }
-      this.size = Math.pow(2, 32 - this.bitmask);
-      this.base = long2ip(this.netLong);
-      this.mask = long2ip(this.maskLong);
-      this.hostmask = long2ip(~this.maskLong);
-      this.first = this.bitmask <= 30 ? long2ip(this.netLong + 1) : this.base;
-      this.last = this.bitmask <= 30 ? long2ip(this.netLong + this.size - 2) : long2ip(this.netLong + this.size - 1);
-      this.broadcast = this.bitmask <= 30 ? long2ip(this.netLong + this.size - 1) : void 0;
+        const [n, c] = parseNum(ip);
+        ip = ip.substring(c);
+        b.push(n);
     }
+    if (ip.length !== 0) {
+        throw new Error('Invalid IP');
+    }
+    switch (b.length) {
+        case 1:
+            if (b[0] > 0xFFFFFFFF) {
+                throw new Error('Invalid IP');
+            }
+            return b[0] >>> 0;
+        case 2:
+            if (b[0] > 0xFF || b[1] > 0xFFFFFF) {
+                throw new Error('Invalid IP');
+            }
+            return (b[0] << 24 | b[1]) >>> 0;
+        case 3:
+            if (b[0] > 0xFF || b[1] > 0xFF || b[2] > 0xFFFF) {
+                throw new Error('Invalid IP');
+            }
+            return (b[0] << 24 | b[1] << 16 | b[2]) >>> 0;
+        case 4:
+            if (b[0] > 0xFF || b[1] > 0xFF || b[2] > 0xFF || b[3] > 0xFF) {
+                throw new Error('Invalid IP');
+            }
+            return (b[0] << 24 | b[1] << 16 | b[2] << 8 | b[3]) >>> 0;
+        default:
+            throw new Error('Invalid IP');
+    }
+}
+class Netmask4Impl {
+    constructor(net, mask) {
+        if (typeof net !== 'string') {
+            throw new Error("Missing `net' parameter");
+        }
+        let maskStr = mask;
+        if (!maskStr) {
+            const parts = net.split('/', 2);
+            net = parts[0];
+            maskStr = parts[1];
+        }
+        if (!maskStr) {
+            maskStr = 32;
+        }
+        if (typeof maskStr === 'string' && maskStr.indexOf('.') > -1) {
+            try {
+                this.maskLong = ip2long(maskStr);
+            }
+            catch (error) {
+                throw new Error("Invalid mask: " + maskStr);
+            }
+            this.bitmask = NaN;
+            for (let i = 32; i >= 0; i--) {
+                if (this.maskLong === (0xffffffff << (32 - i)) >>> 0) {
+                    this.bitmask = i;
+                    break;
+                }
+            }
+        }
+        else if (maskStr || maskStr === 0) {
+            this.bitmask = parseInt(maskStr, 10);
+            this.maskLong = 0;
+            if (this.bitmask > 0) {
+                this.maskLong = (0xffffffff << (32 - this.bitmask)) >>> 0;
+            }
+        }
+        else {
+            throw new Error("Invalid mask: empty");
+        }
+        try {
+            this.netLong = (ip2long(net) & this.maskLong) >>> 0;
+        }
+        catch (error) {
+            throw new Error("Invalid net address: " + net);
+        }
+        if (!(this.bitmask <= 32)) {
+            throw new Error("Invalid mask for ip4: " + maskStr);
+        }
+        this.size = Math.pow(2, 32 - this.bitmask);
+        this.base = long2ip(this.netLong);
+        this.mask = long2ip(this.maskLong);
+        this.hostmask = long2ip(~this.maskLong);
+        this.first = this.bitmask <= 30 ? long2ip(this.netLong + 1) : this.base;
+        this.last = this.bitmask <= 30 ? long2ip(this.netLong + this.size - 2) : long2ip(this.netLong + this.size - 1);
+        this.broadcast = this.bitmask <= 30 ? long2ip(this.netLong + this.size - 1) : undefined;
+    }
+    contains(ip) {
+        if (typeof ip === 'string' && (ip.indexOf('/') > 0 || ip.split('.').length !== 4)) {
+            ip = new Netmask4Impl(ip);
+        }
+        if (ip instanceof Netmask4Impl) {
+            return this.contains(ip.base) && this.contains((ip.broadcast || ip.last));
+        }
+        else {
+            return (ip2long(ip) & this.maskLong) >>> 0 === (this.netLong & this.maskLong) >>> 0;
+        }
+    }
+    next(count = 1) {
+        return new Netmask4Impl(long2ip(this.netLong + (this.size * count)), this.mask);
+    }
+    forEach(fn) {
+        let long = ip2long(this.first);
+        const lastLong = ip2long(this.last);
+        let index = 0;
+        while (long <= lastLong) {
+            fn(long2ip(long), long, index);
+            index++;
+            long++;
+        }
+    }
+    toString() {
+        return this.base + "/" + this.bitmask;
+    }
+}
+exports.Netmask4Impl = Netmask4Impl;
 
-    Netmask.prototype.contains = function(ip) {
-      if (typeof ip === 'string' && (ip.indexOf('/') > 0 || ip.split('.').length !== 4)) {
-        ip = new Netmask(ip);
-      }
-      if (ip instanceof Netmask) {
-        return this.contains(ip.base) && this.contains(ip.broadcast || ip.last);
-      } else {
-        return (ip2long(ip) & this.maskLong) >>> 0 === (this.netLong & this.maskLong) >>> 0;
-      }
-    };
 
-    Netmask.prototype.next = function(count) {
-      if (count == null) {
-        count = 1;
-      }
-      return new Netmask(long2ip(this.netLong + (this.size * count)), this.mask);
-    };
+/***/ }),
 
-    Netmask.prototype.forEach = function(fn) {
-      var index, lastLong, long;
-      long = ip2long(this.first);
-      lastLong = ip2long(this.last);
-      index = 0;
-      while (long <= lastLong) {
-        fn(long2ip(long), long, index);
-        index++;
-        long++;
-      }
-    };
+/***/ 95273:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
-    Netmask.prototype.toString = function() {
-      return this.base + "/" + this.bitmask;
-    };
+"use strict";
 
-    return Netmask;
-
-  })();
-
-  exports.ip2long = ip2long;
-
-  exports.long2ip = long2ip;
-
-  exports.Netmask = Netmask;
-
-}).call(this);
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.Netmask6Impl = void 0;
+exports.ip6bigint = ip6bigint;
+exports.bigint2ip6 = bigint2ip6;
+const netmask4_1 = __nccwpck_require__(51783);
+const MAX_IPV6 = (1n << 128n) - 1n;
+function ip6bigint(ip) {
+    // Strip zone ID (e.g. %eth0)
+    const zoneIdx = ip.indexOf('%');
+    if (zoneIdx !== -1) {
+        ip = ip.substring(0, zoneIdx);
+    }
+    // Handle mixed IPv4-mapped (e.g. ::ffff:192.168.1.1)
+    const lastColon = ip.lastIndexOf(':');
+    if (lastColon !== -1 && ip.indexOf('.', lastColon) !== -1) {
+        const ipv4Part = ip.substring(lastColon + 1);
+        const ipv4Long = (0, netmask4_1.ip2long)(ipv4Part);
+        // IPv4 part replaces last 2 groups (32 bits), expand prefix to 6 groups
+        const ipv6Prefix = ip.substring(0, lastColon + 1) + '0:0';
+        const prefixVal = parseIPv6Pure(ipv6Prefix);
+        return (prefixVal & ~0xffffffffn) | BigInt(ipv4Long);
+    }
+    return parseIPv6Pure(ip);
+}
+function parseIPv6Pure(ip) {
+    const doubleColonIdx = ip.indexOf('::');
+    let groups;
+    if (doubleColonIdx !== -1) {
+        const left = ip.substring(0, doubleColonIdx);
+        const right = ip.substring(doubleColonIdx + 2);
+        const leftGroups = left === '' ? [] : left.split(':');
+        const rightGroups = right === '' ? [] : right.split(':');
+        const missing = 8 - leftGroups.length - rightGroups.length;
+        if (missing < 0) {
+            throw new Error('Invalid IPv6: too many groups');
+        }
+        groups = [...leftGroups, ...Array(missing).fill('0'), ...rightGroups];
+    }
+    else {
+        groups = ip.split(':');
+    }
+    if (groups.length !== 8) {
+        throw new Error('Invalid IPv6: expected 8 groups, got ' + groups.length);
+    }
+    let result = 0n;
+    for (let i = 0; i < 8; i++) {
+        const g = groups[i];
+        if (g.length === 0 || g.length > 4) {
+            throw new Error('Invalid IPv6: bad group "' + g + '"');
+        }
+        const val = parseInt(g, 16);
+        if (isNaN(val) || val < 0 || val > 0xffff) {
+            throw new Error('Invalid IPv6: bad group "' + g + '"');
+        }
+        result = (result << 16n) | BigInt(val);
+    }
+    return result;
+}
+function bigint2ip6(n) {
+    if (n < 0n || n > MAX_IPV6) {
+        throw new Error('Invalid IPv6 address value');
+    }
+    const groups = [];
+    for (let i = 0; i < 8; i++) {
+        groups.unshift(Number(n & 0xffffn));
+        n >>= 16n;
+    }
+    // RFC 5952: find longest run of consecutive zero groups
+    let bestStart = -1;
+    let bestLen = 0;
+    let curStart = -1;
+    let curLen = 0;
+    for (let i = 0; i < 8; i++) {
+        if (groups[i] === 0) {
+            if (curStart === -1) {
+                curStart = i;
+                curLen = 1;
+            }
+            else {
+                curLen++;
+            }
+        }
+        else {
+            if (curLen > bestLen && curLen >= 2) {
+                bestStart = curStart;
+                bestLen = curLen;
+            }
+            curStart = -1;
+            curLen = 0;
+        }
+    }
+    if (curLen > bestLen && curLen >= 2) {
+        bestStart = curStart;
+        bestLen = curLen;
+    }
+    if (bestStart !== -1 && bestStart + bestLen === 8 && bestStart > 0) {
+        const before = groups.slice(0, bestStart).map(g => g.toString(16));
+        return before.join(':') + '::';
+    }
+    else if (bestStart === 0) {
+        const after = groups.slice(bestLen).map(g => g.toString(16));
+        return '::' + after.join(':');
+    }
+    else if (bestStart > 0) {
+        const before = groups.slice(0, bestStart).map(g => g.toString(16));
+        const after = groups.slice(bestStart + bestLen).map(g => g.toString(16));
+        return before.join(':') + '::' + after.join(':');
+    }
+    else {
+        return groups.map(g => g.toString(16)).join(':');
+    }
+}
+class Netmask6Impl {
+    constructor(net, mask) {
+        if (typeof net !== 'string') {
+            throw new Error("Missing `net' parameter");
+        }
+        let prefixLen = mask;
+        if (prefixLen === undefined || prefixLen === null) {
+            const slashIdx = net.indexOf('/');
+            if (slashIdx !== -1) {
+                prefixLen = parseInt(net.substring(slashIdx + 1), 10);
+                net = net.substring(0, slashIdx);
+            }
+            else {
+                prefixLen = 128;
+            }
+        }
+        if (isNaN(prefixLen) || prefixLen < 0 || prefixLen > 128) {
+            throw new Error('Invalid mask for IPv6: ' + prefixLen);
+        }
+        this.bitmask = prefixLen;
+        if (this.bitmask === 0) {
+            this.maskBigint = 0n;
+        }
+        else {
+            this.maskBigint = (MAX_IPV6 >> BigInt(128 - this.bitmask)) << BigInt(128 - this.bitmask);
+        }
+        try {
+            this.netBigint = ip6bigint(net) & this.maskBigint;
+        }
+        catch (error) {
+            throw new Error('Invalid IPv6 net address: ' + net);
+        }
+        this.size = Number(1n << BigInt(128 - this.bitmask));
+        this.base = bigint2ip6(this.netBigint);
+        this.mask = bigint2ip6(this.maskBigint);
+        this.hostmask = bigint2ip6(~this.maskBigint & MAX_IPV6);
+        this.first = this.base;
+        this.last = bigint2ip6(this.netBigint + (1n << BigInt(128 - this.bitmask)) - 1n);
+        this.broadcast = undefined;
+    }
+    contains(ip) {
+        if (typeof ip === 'string') {
+            if (ip.indexOf('/') > 0) {
+                ip = new Netmask6Impl(ip);
+            }
+        }
+        if (ip instanceof Netmask6Impl) {
+            return this.contains(ip.base) && this.contains(ip.last);
+        }
+        else {
+            const addr = ip6bigint(ip);
+            return (addr & this.maskBigint) === this.netBigint;
+        }
+    }
+    next(count = 1) {
+        const sizeBig = 1n << BigInt(128 - this.bitmask);
+        return new Netmask6Impl(bigint2ip6(this.netBigint + sizeBig * BigInt(count)), this.bitmask);
+    }
+    forEach(fn) {
+        let addr = this.netBigint;
+        const sizeBig = 1n << BigInt(128 - this.bitmask);
+        const lastAddr = this.netBigint + sizeBig - 1n;
+        let index = 0;
+        while (addr <= lastAddr) {
+            fn(bigint2ip6(addr), Number(addr), index);
+            index++;
+            addr++;
+        }
+    }
+    toString() {
+        return this.base + '/' + this.bitmask;
+    }
+}
+exports.Netmask6Impl = Netmask6Impl;
 
 
 /***/ }),
@@ -49803,13 +45171,21 @@ const events_1 = __nccwpck_require__(24434);
 const debug_1 = __importDefault(__nccwpck_require__(2830));
 const url_1 = __nccwpck_require__(87016);
 const agent_base_1 = __nccwpck_require__(98894);
-const http_proxy_agent_1 = __nccwpck_require__(81970);
-const https_proxy_agent_1 = __nccwpck_require__(3669);
-const socks_proxy_agent_1 = __nccwpck_require__(53357);
 const get_uri_1 = __nccwpck_require__(23624);
 const pac_resolver_1 = __nccwpck_require__(80598);
 const quickjs_emscripten_1 = __nccwpck_require__(91942);
 const debug = (0, debug_1.default)('pac-proxy-agent');
+const setServernameFromNonIpHost = (options) => {
+    if (options.servername === undefined &&
+        options.host &&
+        !net.isIP(options.host)) {
+        return {
+            ...options,
+            servername: options.host,
+        };
+    }
+    return options;
+};
 /**
  * The `PacProxyAgent` class.
  *
@@ -49846,8 +45222,6 @@ class PacProxyAgent extends agent_base_1.Agent {
     /**
      * Loads the PAC proxy file from the source if necessary, and returns
      * a generated `FindProxyForURL()` resolver function to use.
-     *
-     * @api private
      */
     getResolver() {
         if (!this.resolverPromise) {
@@ -49904,32 +45278,16 @@ class PacProxyAgent extends agent_base_1.Agent {
      */
     async connect(req, opts) {
         const { secureEndpoint } = opts;
+        const isWebSocket = req.getHeader('upgrade') === 'websocket';
         // First, get a generated `FindProxyForURL()` function,
         // either cached or retrieved from the source
         const resolver = await this.getResolver();
         // Calculate the `url` parameter
+        const protocol = secureEndpoint ? 'https:' : 'http:';
+        const host = opts.host && net.isIPv6(opts.host) ? `[${opts.host}]` : opts.host;
         const defaultPort = secureEndpoint ? 443 : 80;
-        let path = req.path;
-        let search = null;
-        const firstQuestion = path.indexOf('?');
-        if (firstQuestion !== -1) {
-            search = path.substring(firstQuestion);
-            path = path.substring(0, firstQuestion);
-        }
-        const urlOpts = {
-            ...opts,
-            protocol: secureEndpoint ? 'https:' : 'http:',
-            pathname: path,
-            search,
-            // need to use `hostname` instead of `host` otherwise `port` is ignored
-            hostname: opts.host,
-            host: null,
-            href: null,
-            // set `port` to null when it is the protocol default port (80 / 443)
-            port: defaultPort === opts.port ? null : opts.port,
-        };
-        const url = (0, url_1.format)(urlOpts);
-        debug('url: %o', url);
+        const url = Object.assign(new url_1.URL(req.path, `${protocol}//${host}`), defaultPort ? undefined : { port: opts.port });
+        debug('url: %s', url);
         let result = await resolver(url);
         // Default to "DIRECT" if a falsey value was returned (or nothing)
         if (!result) {
@@ -49950,11 +45308,7 @@ class PacProxyAgent extends agent_base_1.Agent {
             if (type === 'DIRECT') {
                 // Direct connection to the destination endpoint
                 if (secureEndpoint) {
-                    const servername = opts.servername || opts.host;
-                    socket = tls.connect({
-                        ...opts,
-                        servername,
-                    });
+                    socket = tls.connect(setServernameFromNonIpHost(opts));
                 }
                 else {
                     socket = net.connect(opts);
@@ -49962,11 +45316,13 @@ class PacProxyAgent extends agent_base_1.Agent {
             }
             else if (type === 'SOCKS' || type === 'SOCKS5') {
                 // Use a SOCKSv5h proxy
-                agent = new socks_proxy_agent_1.SocksProxyAgent(`socks://${target}`, this.opts);
+                const { SocksProxyAgent } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(53357)));
+                agent = new SocksProxyAgent(`socks://${target}`, this.opts);
             }
             else if (type === 'SOCKS4') {
                 // Use a SOCKSv4a proxy
-                agent = new socks_proxy_agent_1.SocksProxyAgent(`socks4a://${target}`, this.opts);
+                const { SocksProxyAgent } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(53357)));
+                agent = new SocksProxyAgent(`socks4a://${target}`, this.opts);
             }
             else if (type === 'PROXY' ||
                 type === 'HTTP' ||
@@ -49974,11 +45330,13 @@ class PacProxyAgent extends agent_base_1.Agent {
                 // Use an HTTP or HTTPS proxy
                 // http://dev.chromium.org/developers/design-documents/secure-web-proxy
                 const proxyURL = `${type === 'HTTPS' ? 'https' : 'http'}://${target}`;
-                if (secureEndpoint) {
-                    agent = new https_proxy_agent_1.HttpsProxyAgent(proxyURL, this.opts);
+                if (secureEndpoint || isWebSocket) {
+                    const { HttpsProxyAgent } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(3669)));
+                    agent = new HttpsProxyAgent(proxyURL, this.opts);
                 }
                 else {
-                    agent = new http_proxy_agent_1.HttpProxyAgent(proxyURL, this.opts);
+                    const { HttpProxyAgent } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(81970)));
+                    agent = new HttpProxyAgent(proxyURL, this.opts);
                 }
             }
             try {
@@ -50366,7 +45724,7 @@ function normalizeFamily(family) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-const netmask_1 = __nccwpck_require__(35192);
+const netmask_1 = __nccwpck_require__(78755);
 const util_1 = __nccwpck_require__(78696);
 /**
  * True iff the IP address of the host matches the specified IP address pattern.
@@ -51017,31 +46375,21 @@ function pendGo(self, fn) {
 /***/ }),
 
 /***/ 57336:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+/***/ ((module) => {
 
-let argv = process.argv || [],
-	env = process.env
+let p = process || {}, argv = p.argv || [], env = p.env || {}
 let isColorSupported =
-	!("NO_COLOR" in env || argv.includes("--no-color")) &&
-	("FORCE_COLOR" in env ||
-		argv.includes("--color") ||
-		process.platform === "win32" ||
-		(require != null && (__nccwpck_require__(52018).isatty)(1) && env.TERM !== "dumb") ||
-		"CI" in env)
+	!(!!env.NO_COLOR || argv.includes("--no-color")) &&
+	(!!env.FORCE_COLOR || argv.includes("--color") || p.platform === "win32" || ((p.stdout || {}).isTTY && env.TERM !== "dumb") || !!env.CI)
 
-let formatter =
-	(open, close, replace = open) =>
+let formatter = (open, close, replace = open) =>
 	input => {
-		let string = "" + input
-		let index = string.indexOf(close, open.length)
-		return ~index
-			? open + replaceClose(string, close, replace, index) + close
-			: open + string + close
+		let string = "" + input, index = string.indexOf(close, open.length)
+		return ~index ? open + replaceClose(string, close, replace, index) + close : open + string + close
 	}
 
 let replaceClose = (string, close, replace, index) => {
-	let result = ""
-	let cursor = 0
+	let result = "", cursor = 0
 	do {
 		result += string.substring(cursor, index) + replace
 		cursor = index + close.length
@@ -51051,34 +46399,54 @@ let replaceClose = (string, close, replace, index) => {
 }
 
 let createColors = (enabled = isColorSupported) => {
-	let init = enabled ? formatter : () => String
+	let f = enabled ? formatter : () => String
 	return {
 		isColorSupported: enabled,
-		reset: init("\x1b[0m", "\x1b[0m"),
-		bold: init("\x1b[1m", "\x1b[22m", "\x1b[22m\x1b[1m"),
-		dim: init("\x1b[2m", "\x1b[22m", "\x1b[22m\x1b[2m"),
-		italic: init("\x1b[3m", "\x1b[23m"),
-		underline: init("\x1b[4m", "\x1b[24m"),
-		inverse: init("\x1b[7m", "\x1b[27m"),
-		hidden: init("\x1b[8m", "\x1b[28m"),
-		strikethrough: init("\x1b[9m", "\x1b[29m"),
-		black: init("\x1b[30m", "\x1b[39m"),
-		red: init("\x1b[31m", "\x1b[39m"),
-		green: init("\x1b[32m", "\x1b[39m"),
-		yellow: init("\x1b[33m", "\x1b[39m"),
-		blue: init("\x1b[34m", "\x1b[39m"),
-		magenta: init("\x1b[35m", "\x1b[39m"),
-		cyan: init("\x1b[36m", "\x1b[39m"),
-		white: init("\x1b[37m", "\x1b[39m"),
-		gray: init("\x1b[90m", "\x1b[39m"),
-		bgBlack: init("\x1b[40m", "\x1b[49m"),
-		bgRed: init("\x1b[41m", "\x1b[49m"),
-		bgGreen: init("\x1b[42m", "\x1b[49m"),
-		bgYellow: init("\x1b[43m", "\x1b[49m"),
-		bgBlue: init("\x1b[44m", "\x1b[49m"),
-		bgMagenta: init("\x1b[45m", "\x1b[49m"),
-		bgCyan: init("\x1b[46m", "\x1b[49m"),
-		bgWhite: init("\x1b[47m", "\x1b[49m"),
+		reset: f("\x1b[0m", "\x1b[0m"),
+		bold: f("\x1b[1m", "\x1b[22m", "\x1b[22m\x1b[1m"),
+		dim: f("\x1b[2m", "\x1b[22m", "\x1b[22m\x1b[2m"),
+		italic: f("\x1b[3m", "\x1b[23m"),
+		underline: f("\x1b[4m", "\x1b[24m"),
+		inverse: f("\x1b[7m", "\x1b[27m"),
+		hidden: f("\x1b[8m", "\x1b[28m"),
+		strikethrough: f("\x1b[9m", "\x1b[29m"),
+
+		black: f("\x1b[30m", "\x1b[39m"),
+		red: f("\x1b[31m", "\x1b[39m"),
+		green: f("\x1b[32m", "\x1b[39m"),
+		yellow: f("\x1b[33m", "\x1b[39m"),
+		blue: f("\x1b[34m", "\x1b[39m"),
+		magenta: f("\x1b[35m", "\x1b[39m"),
+		cyan: f("\x1b[36m", "\x1b[39m"),
+		white: f("\x1b[37m", "\x1b[39m"),
+		gray: f("\x1b[90m", "\x1b[39m"),
+
+		bgBlack: f("\x1b[40m", "\x1b[49m"),
+		bgRed: f("\x1b[41m", "\x1b[49m"),
+		bgGreen: f("\x1b[42m", "\x1b[49m"),
+		bgYellow: f("\x1b[43m", "\x1b[49m"),
+		bgBlue: f("\x1b[44m", "\x1b[49m"),
+		bgMagenta: f("\x1b[45m", "\x1b[49m"),
+		bgCyan: f("\x1b[46m", "\x1b[49m"),
+		bgWhite: f("\x1b[47m", "\x1b[49m"),
+
+		blackBright: f("\x1b[90m", "\x1b[39m"),
+		redBright: f("\x1b[91m", "\x1b[39m"),
+		greenBright: f("\x1b[92m", "\x1b[39m"),
+		yellowBright: f("\x1b[93m", "\x1b[39m"),
+		blueBright: f("\x1b[94m", "\x1b[39m"),
+		magentaBright: f("\x1b[95m", "\x1b[39m"),
+		cyanBright: f("\x1b[96m", "\x1b[39m"),
+		whiteBright: f("\x1b[97m", "\x1b[39m"),
+
+		bgBlackBright: f("\x1b[100m", "\x1b[49m"),
+		bgRedBright: f("\x1b[101m", "\x1b[49m"),
+		bgGreenBright: f("\x1b[102m", "\x1b[49m"),
+		bgYellowBright: f("\x1b[103m", "\x1b[49m"),
+		bgBlueBright: f("\x1b[104m", "\x1b[49m"),
+		bgMagentaBright: f("\x1b[105m", "\x1b[49m"),
+		bgCyanBright: f("\x1b[106m", "\x1b[49m"),
+		bgWhiteBright: f("\x1b[107m", "\x1b[49m"),
 	}
 }
 
@@ -51379,35 +46747,37 @@ const lru_cache_1 = __importDefault(__nccwpck_require__(55367));
 const agent_base_1 = __nccwpck_require__(98894);
 const debug_1 = __importDefault(__nccwpck_require__(2830));
 const proxy_from_env_1 = __nccwpck_require__(77777);
-const pac_proxy_agent_1 = __nccwpck_require__(84498);
-const http_proxy_agent_1 = __nccwpck_require__(81970);
-const https_proxy_agent_1 = __nccwpck_require__(3669);
-const socks_proxy_agent_1 = __nccwpck_require__(53357);
 const debug = (0, debug_1.default)('proxy-agent');
-const PROTOCOLS = [
-    ...http_proxy_agent_1.HttpProxyAgent.protocols,
-    ...socks_proxy_agent_1.SocksProxyAgent.protocols,
-    ...pac_proxy_agent_1.PacProxyAgent.protocols,
-];
+/**
+ * Shorthands for built-in supported types.
+ * Lazily loaded since some of these imports can be quite expensive
+ * (in particular, pac-proxy-agent).
+ */
+const wellKnownAgents = {
+    http: async () => (await Promise.resolve().then(() => __importStar(__nccwpck_require__(81970)))).HttpProxyAgent,
+    https: async () => (await Promise.resolve().then(() => __importStar(__nccwpck_require__(3669)))).HttpsProxyAgent,
+    socks: async () => (await Promise.resolve().then(() => __importStar(__nccwpck_require__(53357)))).SocksProxyAgent,
+    pac: async () => (await Promise.resolve().then(() => __importStar(__nccwpck_require__(84498)))).PacProxyAgent,
+};
 /**
  * Supported proxy types.
  */
 exports.proxies = {
-    http: [http_proxy_agent_1.HttpProxyAgent, https_proxy_agent_1.HttpsProxyAgent],
-    https: [http_proxy_agent_1.HttpProxyAgent, https_proxy_agent_1.HttpsProxyAgent],
-    socks: [socks_proxy_agent_1.SocksProxyAgent, socks_proxy_agent_1.SocksProxyAgent],
-    socks4: [socks_proxy_agent_1.SocksProxyAgent, socks_proxy_agent_1.SocksProxyAgent],
-    socks4a: [socks_proxy_agent_1.SocksProxyAgent, socks_proxy_agent_1.SocksProxyAgent],
-    socks5: [socks_proxy_agent_1.SocksProxyAgent, socks_proxy_agent_1.SocksProxyAgent],
-    socks5h: [socks_proxy_agent_1.SocksProxyAgent, socks_proxy_agent_1.SocksProxyAgent],
-    'pac+data': [pac_proxy_agent_1.PacProxyAgent, pac_proxy_agent_1.PacProxyAgent],
-    'pac+file': [pac_proxy_agent_1.PacProxyAgent, pac_proxy_agent_1.PacProxyAgent],
-    'pac+ftp': [pac_proxy_agent_1.PacProxyAgent, pac_proxy_agent_1.PacProxyAgent],
-    'pac+http': [pac_proxy_agent_1.PacProxyAgent, pac_proxy_agent_1.PacProxyAgent],
-    'pac+https': [pac_proxy_agent_1.PacProxyAgent, pac_proxy_agent_1.PacProxyAgent],
+    http: [wellKnownAgents.http, wellKnownAgents.https],
+    https: [wellKnownAgents.http, wellKnownAgents.https],
+    socks: [wellKnownAgents.socks, wellKnownAgents.socks],
+    socks4: [wellKnownAgents.socks, wellKnownAgents.socks],
+    socks4a: [wellKnownAgents.socks, wellKnownAgents.socks],
+    socks5: [wellKnownAgents.socks, wellKnownAgents.socks],
+    socks5h: [wellKnownAgents.socks, wellKnownAgents.socks],
+    'pac+data': [wellKnownAgents.pac, wellKnownAgents.pac],
+    'pac+file': [wellKnownAgents.pac, wellKnownAgents.pac],
+    'pac+ftp': [wellKnownAgents.pac, wellKnownAgents.pac],
+    'pac+http': [wellKnownAgents.pac, wellKnownAgents.pac],
+    'pac+https': [wellKnownAgents.pac, wellKnownAgents.pac],
 };
 function isValidProtocol(v) {
-    return PROTOCOLS.includes(v);
+    return Object.keys(exports.proxies).includes(v);
 }
 /**
  * Uses the appropriate `Agent` subclass based off of the "proxy"
@@ -51422,7 +46792,10 @@ class ProxyAgent extends agent_base_1.Agent {
         /**
          * Cache for `Agent` instances.
          */
-        this.cache = new lru_cache_1.default({ max: 20 });
+        this.cache = new lru_cache_1.default({
+            max: 20,
+            dispose: (agent) => agent.destroy(),
+        });
         debug('Creating new ProxyAgent instance: %o', opts);
         this.connectOpts = opts;
         this.httpAgent = opts?.httpAgent || new http.Agent(opts);
@@ -51442,7 +46815,7 @@ class ProxyAgent extends agent_base_1.Agent {
                 : 'http:';
         const host = req.getHeader('host');
         const url = new url_1.URL(req.path, `${protocol}//${host}`).href;
-        const proxy = await this.getProxyForUrl(url);
+        const proxy = await this.getProxyForUrl(url, req);
         if (!proxy) {
             debug('Proxy not enabled for URL: %o', url);
             return secureEndpoint ? this.httpsAgent : this.httpAgent;
@@ -51458,8 +46831,7 @@ class ProxyAgent extends agent_base_1.Agent {
             if (!isValidProtocol(proxyProto)) {
                 throw new Error(`Unsupported protocol for proxy URL: ${proxy}`);
             }
-            const ctor = exports.proxies[proxyProto][secureEndpoint || isWebSocket ? 1 : 0];
-            // @ts-expect-error meh…
+            const ctor = await exports.proxies[proxyProto][secureEndpoint || isWebSocket ? 1 : 0]();
             agent = new ctor(proxy, this.connectOpts);
             this.cache.set(cacheKey, agent);
         }
@@ -51601,10 +46973,14 @@ exports.getProxyForUrl = getProxyForUrl;
 
 var once = __nccwpck_require__(55560)
 var eos = __nccwpck_require__(31424)
-var fs = __nccwpck_require__(79896) // we only need fs to get the ReadStream and WriteStream prototypes
+var fs
+
+try {
+  fs = __nccwpck_require__(79896) // we only need fs to get the ReadStream and WriteStream prototypes
+} catch (e) {}
 
 var noop = function () {}
-var ancient = /^v?\.0/.test(process.version)
+var ancient = typeof process === 'undefined' ? false : /^v?\.0/.test(process.version)
 
 var isFn = function (fn) {
   return typeof fn === 'function'
@@ -51681,24 +47057,6 @@ var pump = function () {
 }
 
 module.exports = pump
-
-
-/***/ }),
-
-/***/ 5506:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-module.exports = (typeof process !== 'undefined' && typeof process.nextTick === 'function')
-  ? process.nextTick.bind(process)
-  : __nccwpck_require__(36828)
-
-
-/***/ }),
-
-/***/ 36828:
-/***/ ((module) => {
-
-module.exports = typeof queueMicrotask === 'function' ? queueMicrotask : (fn) => Promise.resolve().then(fn)
 
 
 /***/ }),
@@ -55793,9 +51151,21 @@ const socks_1 = __nccwpck_require__(42474);
 const agent_base_1 = __nccwpck_require__(98894);
 const debug_1 = __importDefault(__nccwpck_require__(2830));
 const dns = __importStar(__nccwpck_require__(72250));
+const net = __importStar(__nccwpck_require__(69278));
 const tls = __importStar(__nccwpck_require__(64756));
 const url_1 = __nccwpck_require__(87016);
 const debug = (0, debug_1.default)('socks-proxy-agent');
+const setServernameFromNonIpHost = (options) => {
+    if (options.servername === undefined &&
+        options.host &&
+        !net.isIP(options.host)) {
+        return {
+            ...options,
+            servername: options.host,
+        };
+    }
+    return options;
+};
 function parseSocksURL(url) {
     let lookup = false;
     let type = 5;
@@ -55911,11 +51281,9 @@ class SocksProxyAgent extends agent_base_1.Agent {
             // The proxy is connecting to a TLS server, so upgrade
             // this socket connection to a TLS connection.
             debug('Upgrading socket connection to TLS');
-            const servername = opts.servername || opts.host;
             const tlsSocket = tls.connect({
-                ...omit(opts, 'host', 'path', 'port'),
+                ...omit(setServernameFromNonIpHost(opts), 'host', 'path', 'port'),
                 socket,
-                servername,
             });
             tlsSocket.once('error', (error) => {
                 debug('Socket TLS error', error.message);
@@ -56869,7 +52237,11 @@ var SocksClientState;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ipToBuffer = exports.int32ToIpv4 = exports.ipv4ToInt32 = exports.validateSocksClientChainOptions = exports.validateSocksClientOptions = void 0;
+exports.validateSocksClientOptions = validateSocksClientOptions;
+exports.validateSocksClientChainOptions = validateSocksClientChainOptions;
+exports.ipv4ToInt32 = ipv4ToInt32;
+exports.int32ToIpv4 = int32ToIpv4;
+exports.ipToBuffer = ipToBuffer;
 const util_1 = __nccwpck_require__(79712);
 const constants_1 = __nccwpck_require__(24223);
 const stream = __nccwpck_require__(2203);
@@ -56909,7 +52281,6 @@ function validateSocksClientOptions(options, acceptedCommands = ['connect', 'bin
         throw new util_1.SocksClientError(constants_1.ERRORS.InvalidSocksClientOptionsExistingSocket, options);
     }
 }
-exports.validateSocksClientOptions = validateSocksClientOptions;
 /**
  * Validates the SocksClientChainOptions
  * @param options { SocksClientChainOptions }
@@ -56942,7 +52313,6 @@ function validateSocksClientChainOptions(options) {
         throw new util_1.SocksClientError(constants_1.ERRORS.InvalidSocksClientOptionsTimeout, options);
     }
 }
-exports.validateSocksClientChainOptions = validateSocksClientChainOptions;
 function validateCustomProxyAuth(proxy, options) {
     if (proxy.custom_auth_method !== undefined) {
         // Invalid auth method range
@@ -56973,6 +52343,7 @@ function validateCustomProxyAuth(proxy, options) {
 function isValidSocksRemoteHost(remoteHost) {
     return (remoteHost &&
         typeof remoteHost.host === 'string' &&
+        Buffer.byteLength(remoteHost.host) < 256 &&
         typeof remoteHost.port === 'number' &&
         remoteHost.port >= 0 &&
         remoteHost.port <= 65535);
@@ -56999,9 +52370,8 @@ function isValidTimeoutValue(value) {
 function ipv4ToInt32(ip) {
     const address = new ip_address_1.Address4(ip);
     // Convert the IPv4 address parts to an integer
-    return address.toArray().reduce((acc, part) => (acc << 8) + part, 0);
+    return address.toArray().reduce((acc, part) => (acc << 8) + part, 0) >>> 0;
 }
-exports.ipv4ToInt32 = ipv4ToInt32;
 function int32ToIpv4(int32) {
     // Extract each byte (octet) from the 32-bit integer
     const octet1 = (int32 >>> 24) & 0xff;
@@ -57011,7 +52381,6 @@ function int32ToIpv4(int32) {
     // Combine the octets into a string in IPv4 format
     return [octet1, octet2, octet3, octet4].join('.');
 }
-exports.int32ToIpv4 = int32ToIpv4;
 function ipToBuffer(ip) {
     if (net.isIPv4(ip)) {
         // Handle IPv4 addresses
@@ -57031,7 +52400,6 @@ function ipToBuffer(ip) {
         throw new Error('Invalid IP address format');
     }
 }
-exports.ipToBuffer = ipToBuffer;
 //# sourceMappingURL=helpers.js.map
 
 /***/ }),
@@ -57092,7 +52460,8 @@ exports.ReceiveBuffer = ReceiveBuffer;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.shuffleArray = exports.SocksClientError = void 0;
+exports.SocksClientError = void 0;
+exports.shuffleArray = shuffleArray;
 /**
  * Error wrapper for SocksClient
  */
@@ -57113,7 +52482,6 @@ function shuffleArray(array) {
         [array[i], array[j]] = [array[j], array[i]];
     }
 }
-exports.shuffleArray = shuffleArray;
 //# sourceMappingURL=util.js.map
 
 /***/ }),
@@ -60906,284 +56274,46 @@ exports.SourceNode = __nccwpck_require__(49706).SourceNode;
 
 /***/ }),
 
-/***/ 19973:
-/***/ ((__unused_webpack_module, exports) => {
-
-/* global window, exports, define */
-
-!function() {
-    'use strict'
-
-    var re = {
-        not_string: /[^s]/,
-        not_bool: /[^t]/,
-        not_type: /[^T]/,
-        not_primitive: /[^v]/,
-        number: /[diefg]/,
-        numeric_arg: /[bcdiefguxX]/,
-        json: /[j]/,
-        not_json: /[^j]/,
-        text: /^[^\x25]+/,
-        modulo: /^\x25{2}/,
-        placeholder: /^\x25(?:([1-9]\d*)\$|\(([^)]+)\))?(\+)?(0|'[^$])?(-)?(\d+)?(?:\.(\d+))?([b-gijostTuvxX])/,
-        key: /^([a-z_][a-z_\d]*)/i,
-        key_access: /^\.([a-z_][a-z_\d]*)/i,
-        index_access: /^\[(\d+)\]/,
-        sign: /^[+-]/
-    }
-
-    function sprintf(key) {
-        // `arguments` is not an array, but should be fine for this call
-        return sprintf_format(sprintf_parse(key), arguments)
-    }
-
-    function vsprintf(fmt, argv) {
-        return sprintf.apply(null, [fmt].concat(argv || []))
-    }
-
-    function sprintf_format(parse_tree, argv) {
-        var cursor = 1, tree_length = parse_tree.length, arg, output = '', i, k, ph, pad, pad_character, pad_length, is_positive, sign
-        for (i = 0; i < tree_length; i++) {
-            if (typeof parse_tree[i] === 'string') {
-                output += parse_tree[i]
-            }
-            else if (typeof parse_tree[i] === 'object') {
-                ph = parse_tree[i] // convenience purposes only
-                if (ph.keys) { // keyword argument
-                    arg = argv[cursor]
-                    for (k = 0; k < ph.keys.length; k++) {
-                        if (arg == undefined) {
-                            throw new Error(sprintf('[sprintf] Cannot access property "%s" of undefined value "%s"', ph.keys[k], ph.keys[k-1]))
-                        }
-                        arg = arg[ph.keys[k]]
-                    }
-                }
-                else if (ph.param_no) { // positional argument (explicit)
-                    arg = argv[ph.param_no]
-                }
-                else { // positional argument (implicit)
-                    arg = argv[cursor++]
-                }
-
-                if (re.not_type.test(ph.type) && re.not_primitive.test(ph.type) && arg instanceof Function) {
-                    arg = arg()
-                }
-
-                if (re.numeric_arg.test(ph.type) && (typeof arg !== 'number' && isNaN(arg))) {
-                    throw new TypeError(sprintf('[sprintf] expecting number but found %T', arg))
-                }
-
-                if (re.number.test(ph.type)) {
-                    is_positive = arg >= 0
-                }
-
-                switch (ph.type) {
-                    case 'b':
-                        arg = parseInt(arg, 10).toString(2)
-                        break
-                    case 'c':
-                        arg = String.fromCharCode(parseInt(arg, 10))
-                        break
-                    case 'd':
-                    case 'i':
-                        arg = parseInt(arg, 10)
-                        break
-                    case 'j':
-                        arg = JSON.stringify(arg, null, ph.width ? parseInt(ph.width) : 0)
-                        break
-                    case 'e':
-                        arg = ph.precision ? parseFloat(arg).toExponential(ph.precision) : parseFloat(arg).toExponential()
-                        break
-                    case 'f':
-                        arg = ph.precision ? parseFloat(arg).toFixed(ph.precision) : parseFloat(arg)
-                        break
-                    case 'g':
-                        arg = ph.precision ? String(Number(arg.toPrecision(ph.precision))) : parseFloat(arg)
-                        break
-                    case 'o':
-                        arg = (parseInt(arg, 10) >>> 0).toString(8)
-                        break
-                    case 's':
-                        arg = String(arg)
-                        arg = (ph.precision ? arg.substring(0, ph.precision) : arg)
-                        break
-                    case 't':
-                        arg = String(!!arg)
-                        arg = (ph.precision ? arg.substring(0, ph.precision) : arg)
-                        break
-                    case 'T':
-                        arg = Object.prototype.toString.call(arg).slice(8, -1).toLowerCase()
-                        arg = (ph.precision ? arg.substring(0, ph.precision) : arg)
-                        break
-                    case 'u':
-                        arg = parseInt(arg, 10) >>> 0
-                        break
-                    case 'v':
-                        arg = arg.valueOf()
-                        arg = (ph.precision ? arg.substring(0, ph.precision) : arg)
-                        break
-                    case 'x':
-                        arg = (parseInt(arg, 10) >>> 0).toString(16)
-                        break
-                    case 'X':
-                        arg = (parseInt(arg, 10) >>> 0).toString(16).toUpperCase()
-                        break
-                }
-                if (re.json.test(ph.type)) {
-                    output += arg
-                }
-                else {
-                    if (re.number.test(ph.type) && (!is_positive || ph.sign)) {
-                        sign = is_positive ? '+' : '-'
-                        arg = arg.toString().replace(re.sign, '')
-                    }
-                    else {
-                        sign = ''
-                    }
-                    pad_character = ph.pad_char ? ph.pad_char === '0' ? '0' : ph.pad_char.charAt(1) : ' '
-                    pad_length = ph.width - (sign + arg).length
-                    pad = ph.width ? (pad_length > 0 ? pad_character.repeat(pad_length) : '') : ''
-                    output += ph.align ? sign + arg + pad : (pad_character === '0' ? sign + pad + arg : pad + sign + arg)
-                }
-            }
-        }
-        return output
-    }
-
-    var sprintf_cache = Object.create(null)
-
-    function sprintf_parse(fmt) {
-        if (sprintf_cache[fmt]) {
-            return sprintf_cache[fmt]
-        }
-
-        var _fmt = fmt, match, parse_tree = [], arg_names = 0
-        while (_fmt) {
-            if ((match = re.text.exec(_fmt)) !== null) {
-                parse_tree.push(match[0])
-            }
-            else if ((match = re.modulo.exec(_fmt)) !== null) {
-                parse_tree.push('%')
-            }
-            else if ((match = re.placeholder.exec(_fmt)) !== null) {
-                if (match[2]) {
-                    arg_names |= 1
-                    var field_list = [], replacement_field = match[2], field_match = []
-                    if ((field_match = re.key.exec(replacement_field)) !== null) {
-                        field_list.push(field_match[1])
-                        while ((replacement_field = replacement_field.substring(field_match[0].length)) !== '') {
-                            if ((field_match = re.key_access.exec(replacement_field)) !== null) {
-                                field_list.push(field_match[1])
-                            }
-                            else if ((field_match = re.index_access.exec(replacement_field)) !== null) {
-                                field_list.push(field_match[1])
-                            }
-                            else {
-                                throw new SyntaxError('[sprintf] failed to parse named argument key')
-                            }
-                        }
-                    }
-                    else {
-                        throw new SyntaxError('[sprintf] failed to parse named argument key')
-                    }
-                    match[2] = field_list
-                }
-                else {
-                    arg_names |= 2
-                }
-                if (arg_names === 3) {
-                    throw new Error('[sprintf] mixing positional and named placeholders is not (yet) supported')
-                }
-
-                parse_tree.push(
-                    {
-                        placeholder: match[0],
-                        param_no:    match[1],
-                        keys:        match[2],
-                        sign:        match[3],
-                        pad_char:    match[4],
-                        align:       match[5],
-                        width:       match[6],
-                        precision:   match[7],
-                        type:        match[8]
-                    }
-                )
-            }
-            else {
-                throw new SyntaxError('[sprintf] unexpected placeholder')
-            }
-            _fmt = _fmt.substring(match[0].length)
-        }
-        return sprintf_cache[fmt] = parse_tree
-    }
-
-    /**
-     * export to either browser or node.js
-     */
-    /* eslint-disable quote-props */
-    if (true) {
-        exports.sprintf = sprintf
-        exports.vsprintf = vsprintf
-    }
-    if (typeof window !== 'undefined') {
-        window['sprintf'] = sprintf
-        window['vsprintf'] = vsprintf
-
-        if (typeof define === 'function' && define['amd']) {
-            define(function() {
-                return {
-                    'sprintf': sprintf,
-                    'vsprintf': vsprintf
-                }
-            })
-        }
-    }
-    /* eslint-enable quote-props */
-}(); // eslint-disable-line
-
-
-/***/ }),
-
 /***/ 36204:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
-const { EventEmitter } = __nccwpck_require__(24434)
-const STREAM_DESTROYED = new Error('Stream was destroyed')
-const PREMATURE_CLOSE = new Error('Premature close')
-
-const queueTick = __nccwpck_require__(5506)
+const { EventEmitter } = __nccwpck_require__(29580)
 const FIFO = __nccwpck_require__(83867)
 const TextDecoder = __nccwpck_require__(97934)
 
-/* eslint-disable no-multi-spaces */
+const StreamError = __nccwpck_require__(45657)
+
+// if we do a future major, expect queue microtask to be there always, for now a bit defensive
+const qmt =
+  typeof queueMicrotask === 'undefined' ? (fn) => global.process.nextTick(fn) : queueMicrotask
 
 // 29 bits used total (4 from shared, 14 from read, and 11 from write)
-const MAX = ((1 << 29) - 1)
+const MAX = (1 << 29) - 1
 
 // Shared state
-const OPENING       = 0b0001
+const OPENING = 0b0001
 const PREDESTROYING = 0b0010
-const DESTROYING    = 0b0100
-const DESTROYED     = 0b1000
+const DESTROYING = 0b0100
+const DESTROYED = 0b1000
 
 const NOT_OPENING = MAX ^ OPENING
 const NOT_PREDESTROYING = MAX ^ PREDESTROYING
 
 // Read state (4 bit offset from shared state)
-const READ_ACTIVE           = 0b00000000000001 << 4
-const READ_UPDATING         = 0b00000000000010 << 4
-const READ_PRIMARY          = 0b00000000000100 << 4
-const READ_QUEUED           = 0b00000000001000 << 4
-const READ_RESUMED          = 0b00000000010000 << 4
-const READ_PIPE_DRAINED     = 0b00000000100000 << 4
-const READ_ENDING           = 0b00000001000000 << 4
-const READ_EMIT_DATA        = 0b00000010000000 << 4
-const READ_EMIT_READABLE    = 0b00000100000000 << 4
+const READ_ACTIVE = 0b00000000000001 << 4
+const READ_UPDATING = 0b00000000000010 << 4
+const READ_PRIMARY = 0b00000000000100 << 4
+const READ_QUEUED = 0b00000000001000 << 4
+const READ_RESUMED = 0b00000000010000 << 4
+const READ_PIPE_DRAINED = 0b00000000100000 << 4
+const READ_ENDING = 0b00000001000000 << 4
+const READ_EMIT_DATA = 0b00000010000000 << 4
+const READ_EMIT_READABLE = 0b00000100000000 << 4
 const READ_EMITTED_READABLE = 0b00001000000000 << 4
-const READ_DONE             = 0b00010000000000 << 4
-const READ_NEXT_TICK        = 0b00100000000000 << 4
-const READ_NEEDS_PUSH       = 0b01000000000000 << 4
-const READ_READ_AHEAD       = 0b10000000000000 << 4
+const READ_DONE = 0b00010000000000 << 4
+const READ_NEXT_TICK = 0b00100000000000 << 4
+const READ_NEEDS_PUSH = 0b01000000000000 << 4
+const READ_READ_AHEAD = 0b10000000000000 << 4
 
 // Combined read state
 const READ_FLOWING = READ_RESUMED | READ_PIPE_DRAINED
@@ -61192,40 +56322,40 @@ const READ_PRIMARY_AND_ACTIVE = READ_PRIMARY | READ_ACTIVE
 const READ_EMIT_READABLE_AND_QUEUED = READ_EMIT_READABLE | READ_QUEUED
 const READ_RESUMED_READ_AHEAD = READ_RESUMED | READ_READ_AHEAD
 
-const READ_NOT_ACTIVE             = MAX ^ READ_ACTIVE
-const READ_NON_PRIMARY            = MAX ^ READ_PRIMARY
+const READ_NOT_ACTIVE = MAX ^ READ_ACTIVE
+const READ_NON_PRIMARY = MAX ^ READ_PRIMARY
 const READ_NON_PRIMARY_AND_PUSHED = MAX ^ (READ_PRIMARY | READ_NEEDS_PUSH)
-const READ_PUSHED                 = MAX ^ READ_NEEDS_PUSH
-const READ_PAUSED                 = MAX ^ READ_RESUMED
-const READ_NOT_QUEUED             = MAX ^ (READ_QUEUED | READ_EMITTED_READABLE)
-const READ_NOT_ENDING             = MAX ^ READ_ENDING
-const READ_PIPE_NOT_DRAINED       = MAX ^ READ_FLOWING
-const READ_NOT_NEXT_TICK          = MAX ^ READ_NEXT_TICK
-const READ_NOT_UPDATING           = MAX ^ READ_UPDATING
-const READ_NO_READ_AHEAD          = MAX ^ READ_READ_AHEAD
-const READ_PAUSED_NO_READ_AHEAD   = MAX ^ READ_RESUMED_READ_AHEAD
+const READ_PUSHED = MAX ^ READ_NEEDS_PUSH
+const READ_PAUSED = MAX ^ READ_RESUMED
+const READ_NOT_QUEUED = MAX ^ (READ_QUEUED | READ_EMITTED_READABLE)
+const READ_NOT_ENDING = MAX ^ READ_ENDING
+const READ_PIPE_NOT_DRAINED = MAX ^ READ_FLOWING
+const READ_NOT_NEXT_TICK = MAX ^ READ_NEXT_TICK
+const READ_NOT_UPDATING = MAX ^ READ_UPDATING
+const READ_NO_READ_AHEAD = MAX ^ READ_READ_AHEAD
+const READ_PAUSED_NO_READ_AHEAD = MAX ^ READ_RESUMED_READ_AHEAD
 
 // Write state (18 bit offset, 4 bit offset from shared state and 14 from read state)
-const WRITE_ACTIVE     = 0b00000000001 << 18
-const WRITE_UPDATING   = 0b00000000010 << 18
-const WRITE_PRIMARY    = 0b00000000100 << 18
-const WRITE_QUEUED     = 0b00000001000 << 18
-const WRITE_UNDRAINED  = 0b00000010000 << 18
-const WRITE_DONE       = 0b00000100000 << 18
+const WRITE_ACTIVE = 0b00000000001 << 18
+const WRITE_UPDATING = 0b00000000010 << 18
+const WRITE_PRIMARY = 0b00000000100 << 18
+const WRITE_QUEUED = 0b00000001000 << 18
+const WRITE_UNDRAINED = 0b00000010000 << 18
+const WRITE_DONE = 0b00000100000 << 18
 const WRITE_EMIT_DRAIN = 0b00001000000 << 18
-const WRITE_NEXT_TICK  = 0b00010000000 << 18
-const WRITE_WRITING    = 0b00100000000 << 18
-const WRITE_FINISHING  = 0b01000000000 << 18
-const WRITE_CORKED     = 0b10000000000 << 18
+const WRITE_NEXT_TICK = 0b00010000000 << 18
+const WRITE_WRITING = 0b00100000000 << 18
+const WRITE_FINISHING = 0b01000000000 << 18
+const WRITE_CORKED = 0b10000000000 << 18
 
-const WRITE_NOT_ACTIVE    = MAX ^ (WRITE_ACTIVE | WRITE_WRITING)
-const WRITE_NON_PRIMARY   = MAX ^ WRITE_PRIMARY
-const WRITE_NOT_FINISHING = MAX ^ WRITE_FINISHING
-const WRITE_DRAINED       = MAX ^ WRITE_UNDRAINED
-const WRITE_NOT_QUEUED    = MAX ^ WRITE_QUEUED
+const WRITE_NOT_ACTIVE = MAX ^ (WRITE_ACTIVE | WRITE_WRITING)
+const WRITE_NON_PRIMARY = MAX ^ WRITE_PRIMARY
+const WRITE_NOT_FINISHING = MAX ^ (WRITE_ACTIVE | WRITE_FINISHING)
+const WRITE_DRAINED = MAX ^ WRITE_UNDRAINED
+const WRITE_NOT_QUEUED = MAX ^ WRITE_QUEUED
 const WRITE_NOT_NEXT_TICK = MAX ^ WRITE_NEXT_TICK
-const WRITE_NOT_UPDATING  = MAX ^ WRITE_UPDATING
-const WRITE_NOT_CORKED    = MAX ^ WRITE_CORKED
+const WRITE_NOT_UPDATING = MAX ^ WRITE_UPDATING
+const WRITE_NOT_CORKED = MAX ^ WRITE_CORKED
 
 // Combined shared state
 const ACTIVE = READ_ACTIVE | WRITE_ACTIVE
@@ -61244,9 +56374,11 @@ const READ_PRIMARY_STATUS = OPEN_STATUS | READ_ENDING | READ_DONE
 const READ_STATUS = OPEN_STATUS | READ_DONE | READ_QUEUED
 const READ_ENDING_STATUS = OPEN_STATUS | READ_ENDING | READ_QUEUED
 const READ_READABLE_STATUS = OPEN_STATUS | READ_EMIT_READABLE | READ_QUEUED | READ_EMITTED_READABLE
-const SHOULD_NOT_READ = OPEN_STATUS | READ_ACTIVE | READ_ENDING | READ_DONE | READ_NEEDS_PUSH | READ_READ_AHEAD
+const SHOULD_NOT_READ =
+  OPEN_STATUS | READ_ACTIVE | READ_ENDING | READ_DONE | READ_NEEDS_PUSH | READ_READ_AHEAD
 const READ_BACKPRESSURE_STATUS = DESTROY_STATUS | READ_ENDING | READ_DONE
 const READ_UPDATE_SYNC_STATUS = READ_UPDATING | OPEN_STATUS | READ_NEXT_TICK | READ_PRIMARY
+const READ_NEXT_TICK_OR_OPENING = READ_NEXT_TICK | OPENING
 
 // Combined write state
 const WRITE_PRIMARY_STATUS = OPEN_STATUS | WRITE_FINISHING | WRITE_DONE
@@ -61259,11 +56391,15 @@ const WRITE_ACTIVE_AND_WRITING = WRITE_ACTIVE | WRITE_WRITING
 const WRITE_FINISHING_STATUS = OPEN_STATUS | WRITE_FINISHING | WRITE_QUEUED_AND_ACTIVE | WRITE_DONE
 const WRITE_BACKPRESSURE_STATUS = WRITE_UNDRAINED | DESTROY_STATUS | WRITE_FINISHING | WRITE_DONE
 const WRITE_UPDATE_SYNC_STATUS = WRITE_UPDATING | OPEN_STATUS | WRITE_NEXT_TICK | WRITE_PRIMARY
+const WRITE_DROP_DATA = WRITE_FINISHING | WRITE_DONE | DESTROY_STATUS
 
 const asyncIterator = Symbol.asyncIterator || Symbol('asyncIterator')
 
 class WritableState {
-  constructor (stream, { highWaterMark = 16384, map = null, mapWritable, byteLength, byteLengthWritable } = {}) {
+  constructor(
+    stream,
+    { highWaterMark = 16384, map = null, mapWritable, byteLength, byteLengthWritable } = {}
+  ) {
     this.stream = stream
     this.queue = new FIFO()
     this.highWaterMark = highWaterMark
@@ -61277,11 +56413,16 @@ class WritableState {
     this.afterUpdateNextTick = updateWriteNT.bind(this)
   }
 
-  get ended () {
+  get ending() {
+    return (this.stream._duplexState & WRITE_FINISHING) !== 0
+  }
+
+  get ended() {
     return (this.stream._duplexState & WRITE_DONE) !== 0
   }
 
-  push (data) {
+  push(data) {
+    if ((this.stream._duplexState & WRITE_DROP_DATA) !== 0) return false
     if (this.map !== null) data = this.map(data)
 
     this.buffered += this.byteLength(data)
@@ -61296,7 +56437,7 @@ class WritableState {
     return false
   }
 
-  shift () {
+  shift() {
     const data = this.queue.shift()
 
     this.buffered -= this.byteLength(data)
@@ -61305,13 +56446,17 @@ class WritableState {
     return data
   }
 
-  end (data) {
-    if (typeof data === 'function') this.stream.once('finish', data)
-    else if (data !== undefined && data !== null) this.push(data)
+  end(data) {
+    if (typeof data === 'function') {
+      this.stream.once('finish', data)
+    } else if (data !== undefined && data !== null) {
+      this.push(data)
+    }
+
     this.stream._duplexState = (this.stream._duplexState | WRITE_FINISHING) & WRITE_NON_PRIMARY
   }
 
-  autoBatch (data, cb) {
+  autoBatch(data, cb) {
     const buffer = []
     const stream = this.stream
 
@@ -61324,7 +56469,7 @@ class WritableState {
     stream._writev(buffer, cb)
   }
 
-  update () {
+  update() {
     const stream = this.stream
 
     stream._duplexState |= WRITE_UPDATING
@@ -61342,11 +56487,11 @@ class WritableState {
     stream._duplexState &= WRITE_NOT_UPDATING
   }
 
-  updateNonPrimary () {
+  updateNonPrimary() {
     const stream = this.stream
 
     if ((stream._duplexState & WRITE_FINISHING_STATUS) === WRITE_FINISHING) {
-      stream._duplexState = (stream._duplexState | WRITE_ACTIVE) & WRITE_NOT_FINISHING
+      stream._duplexState = stream._duplexState | WRITE_ACTIVE
       stream._final(afterFinal.bind(this))
       return
     }
@@ -61365,26 +56510,32 @@ class WritableState {
     }
   }
 
-  continueUpdate () {
+  continueUpdate() {
     if ((this.stream._duplexState & WRITE_NEXT_TICK) === 0) return false
     this.stream._duplexState &= WRITE_NOT_NEXT_TICK
     return true
   }
 
-  updateCallback () {
-    if ((this.stream._duplexState & WRITE_UPDATE_SYNC_STATUS) === WRITE_PRIMARY) this.update()
-    else this.updateNextTick()
+  updateCallback() {
+    if ((this.stream._duplexState & WRITE_UPDATE_SYNC_STATUS) === WRITE_PRIMARY) {
+      this.update()
+    } else {
+      this.updateNextTick()
+    }
   }
 
-  updateNextTick () {
+  updateNextTick() {
     if ((this.stream._duplexState & WRITE_NEXT_TICK) !== 0) return
     this.stream._duplexState |= WRITE_NEXT_TICK
-    if ((this.stream._duplexState & WRITE_UPDATING) === 0) queueTick(this.afterUpdateNextTick)
+    if ((this.stream._duplexState & WRITE_UPDATING) === 0) qmt(this.afterUpdateNextTick)
   }
 }
 
 class ReadableState {
-  constructor (stream, { highWaterMark = 16384, map = null, mapReadable, byteLength, byteLengthReadable } = {}) {
+  constructor(
+    stream,
+    { highWaterMark = 16384, map = null, mapReadable, byteLength, byteLengthReadable } = {}
+  ) {
     this.stream = stream
     this.queue = new FIFO()
     this.highWaterMark = highWaterMark === 0 ? 1 : highWaterMark
@@ -61399,12 +56550,16 @@ class ReadableState {
     this.afterUpdateNextTick = updateReadNT.bind(this)
   }
 
-  get ended () {
+  get ending() {
+    return (this.stream._duplexState & READ_ENDING) !== 0
+  }
+
+  get ended() {
     return (this.stream._duplexState & READ_DONE) !== 0
   }
 
-  pipe (pipeTo, cb) {
-    if (this.pipeTo !== null) throw new Error('Can only pipe to one destination')
+  pipe(pipeTo, cb) {
+    if (this.pipeTo !== null) throw StreamError.BAD_ARGUMENT('Can only pipe to one destination')
     if (typeof cb !== 'function') cb = null
 
     this.stream._duplexState |= READ_PIPE_DRAINED
@@ -61430,7 +56585,7 @@ class ReadableState {
     pipeTo.emit('pipe', this.stream)
   }
 
-  push (data) {
+  push(data) {
     const stream = this.stream
 
     if (data === null) {
@@ -61441,7 +56596,10 @@ class ReadableState {
 
     if (this.map !== null) {
       data = this.map(data)
-      if (data === null) return this.buffered < this.highWaterMark
+      if (data === null) {
+        stream._duplexState &= READ_PUSHED
+        return this.buffered < this.highWaterMark
+      }
     }
 
     this.buffered += this.byteLength(data)
@@ -61452,15 +56610,18 @@ class ReadableState {
     return this.buffered < this.highWaterMark
   }
 
-  shift () {
+  shift() {
     const data = this.queue.shift()
 
     this.buffered -= this.byteLength(data)
-    if (this.buffered === 0) this.stream._duplexState &= READ_NOT_QUEUED
+    if (this.buffered === 0) {
+      this.stream._duplexState &= READ_NOT_QUEUED
+    }
+
     return data
   }
 
-  unshift (data) {
+  unshift(data) {
     const pending = [this.map !== null ? this.map(data) : data]
     while (this.buffered > 0) pending.push(this.shift())
 
@@ -61473,13 +56634,20 @@ class ReadableState {
     this.push(pending[pending.length - 1])
   }
 
-  read () {
+  read() {
     const stream = this.stream
 
     if ((stream._duplexState & READ_STATUS) === READ_QUEUED) {
       const data = this.shift()
-      if (this.pipeTo !== null && this.pipeTo.write(data) === false) stream._duplexState &= READ_PIPE_NOT_DRAINED
-      if ((stream._duplexState & READ_EMIT_DATA) !== 0) stream.emit('data', data)
+
+      if (this.pipeTo !== null && this.pipeTo.write(data) === false) {
+        stream._duplexState &= READ_PIPE_NOT_DRAINED
+      }
+
+      if ((stream._duplexState & READ_EMIT_DATA) !== 0) {
+        stream.emit('data', data)
+      }
+
       return data
     }
 
@@ -61491,17 +56659,26 @@ class ReadableState {
     return null
   }
 
-  drain () {
+  drain() {
     const stream = this.stream
 
-    while ((stream._duplexState & READ_STATUS) === READ_QUEUED && (stream._duplexState & READ_FLOWING) !== 0) {
+    while (
+      (stream._duplexState & READ_STATUS) === READ_QUEUED &&
+      (stream._duplexState & READ_FLOWING) !== 0
+    ) {
       const data = this.shift()
-      if (this.pipeTo !== null && this.pipeTo.write(data) === false) stream._duplexState &= READ_PIPE_NOT_DRAINED
-      if ((stream._duplexState & READ_EMIT_DATA) !== 0) stream.emit('data', data)
+
+      if (this.pipeTo !== null && this.pipeTo.write(data) === false) {
+        stream._duplexState &= READ_PIPE_NOT_DRAINED
+      }
+
+      if ((stream._duplexState & READ_EMIT_DATA) !== 0) {
+        stream.emit('data', data)
+      }
     }
   }
 
-  update () {
+  update() {
     const stream = this.stream
 
     stream._duplexState |= READ_UPDATING
@@ -61509,7 +56686,10 @@ class ReadableState {
     do {
       this.drain()
 
-      while (this.buffered < this.highWaterMark && (stream._duplexState & SHOULD_NOT_READ) === READ_READ_AHEAD) {
+      while (
+        this.buffered < this.highWaterMark &&
+        (stream._duplexState & SHOULD_NOT_READ) === READ_READ_AHEAD
+      ) {
         stream._duplexState |= READ_ACTIVE_AND_NEEDS_PUSH
         stream._read(this.afterRead)
         this.drain()
@@ -61520,20 +56700,28 @@ class ReadableState {
         stream.emit('readable')
       }
 
-      if ((stream._duplexState & READ_PRIMARY_AND_ACTIVE) === 0) this.updateNonPrimary()
+      if ((stream._duplexState & READ_PRIMARY_AND_ACTIVE) === 0) {
+        this.updateNonPrimary()
+      }
     } while (this.continueUpdate() === true)
 
     stream._duplexState &= READ_NOT_UPDATING
   }
 
-  updateNonPrimary () {
+  updateNonPrimary() {
     const stream = this.stream
 
     if ((stream._duplexState & READ_ENDING_STATUS) === READ_ENDING) {
       stream._duplexState = (stream._duplexState | READ_DONE) & READ_NOT_ENDING
       stream.emit('end')
-      if ((stream._duplexState & AUTO_DESTROY) === DONE) stream._duplexState |= DESTROYING
-      if (this.pipeTo !== null) this.pipeTo.end()
+
+      if ((stream._duplexState & AUTO_DESTROY) === DONE) {
+        stream._duplexState |= DESTROYING
+      }
+
+      if (this.pipeTo !== null) {
+        this.pipeTo.end()
+      }
     }
 
     if ((stream._duplexState & DESTROY_STATUS) === DESTROYING) {
@@ -61550,26 +56738,35 @@ class ReadableState {
     }
   }
 
-  continueUpdate () {
+  continueUpdate() {
     if ((this.stream._duplexState & READ_NEXT_TICK) === 0) return false
     this.stream._duplexState &= READ_NOT_NEXT_TICK
     return true
   }
 
-  updateCallback () {
-    if ((this.stream._duplexState & READ_UPDATE_SYNC_STATUS) === READ_PRIMARY) this.update()
-    else this.updateNextTick()
+  updateCallback() {
+    if ((this.stream._duplexState & READ_UPDATE_SYNC_STATUS) === READ_PRIMARY) {
+      this.update()
+    } else {
+      this.updateNextTick()
+    }
   }
 
-  updateNextTick () {
+  updateNextTickIfOpen() {
+    if ((this.stream._duplexState & READ_NEXT_TICK_OR_OPENING) !== 0) return
+    this.stream._duplexState |= READ_NEXT_TICK
+    if ((this.stream._duplexState & READ_UPDATING) === 0) qmt(this.afterUpdateNextTick)
+  }
+
+  updateNextTick() {
     if ((this.stream._duplexState & READ_NEXT_TICK) !== 0) return
     this.stream._duplexState |= READ_NEXT_TICK
-    if ((this.stream._duplexState & READ_UPDATING) === 0) queueTick(this.afterUpdateNextTick)
+    if ((this.stream._duplexState & READ_UPDATING) === 0) qmt(this.afterUpdateNextTick)
   }
 }
 
 class TransformState {
-  constructor (stream) {
+  constructor(stream) {
     this.data = null
     this.afterTransform = afterTransform.bind(stream)
     this.afterFinal = null
@@ -61577,7 +56774,7 @@ class TransformState {
 }
 
 class Pipeline {
-  constructor (src, dst, cb) {
+  constructor(src, dst, cb) {
     this.from = src
     this.to = dst
     this.afterPipe = cb
@@ -61585,11 +56782,11 @@ class Pipeline {
     this.pipeToFinished = false
   }
 
-  finished () {
+  finished() {
     this.pipeToFinished = true
   }
 
-  done (stream, err) {
+  done(stream, err) {
     if (err) this.error = err
 
     if (stream === this.to) {
@@ -61597,7 +56794,7 @@ class Pipeline {
 
       if (this.from !== null) {
         if ((this.from._duplexState & READ_DONE) === 0 || !this.pipeToFinished) {
-          this.from.destroy(this.error || new Error('Writable stream closed prematurely'))
+          this.from.destroy(this.error || StreamError.PREMATURE_CLOSE('Writable stream closed'))
         }
         return
       }
@@ -61608,7 +56805,7 @@ class Pipeline {
 
       if (this.to !== null) {
         if ((stream._duplexState & READ_DONE) === 0) {
-          this.to.destroy(this.error || new Error('Readable stream closed before ending'))
+          this.to.destroy(this.error || StreamError.PREMATURE_CLOSE('Readable stream closed'))
         }
         return
       }
@@ -61619,49 +56816,62 @@ class Pipeline {
   }
 }
 
-function afterDrain () {
+function afterDrain() {
   this.stream._duplexState |= READ_PIPE_DRAINED
   this.updateCallback()
 }
 
-function afterFinal (err) {
+function afterFinal(err) {
   const stream = this.stream
   if (err) stream.destroy(err)
+
   if ((stream._duplexState & DESTROY_STATUS) === 0) {
     stream._duplexState |= WRITE_DONE
     stream.emit('finish')
   }
+
   if ((stream._duplexState & AUTO_DESTROY) === DONE) {
     stream._duplexState |= DESTROYING
   }
 
-  stream._duplexState &= WRITE_NOT_ACTIVE
+  stream._duplexState &= WRITE_NOT_FINISHING
 
   // no need to wait the extra tick here, so we short circuit that
-  if ((stream._duplexState & WRITE_UPDATING) === 0) this.update()
-  else this.updateNextTick()
+  if ((stream._duplexState & WRITE_UPDATING) === 0) {
+    this.update()
+  } else {
+    this.updateNextTick()
+  }
 }
 
-function afterDestroy (err) {
+function afterDestroy(err) {
   const stream = this.stream
 
-  if (!err && this.error !== STREAM_DESTROYED) err = this.error
+  if (!err && !StreamError.isStreamDestroyed(this.error)) err = this.error
   if (err) stream.emit('error', err)
+
   stream._duplexState |= DESTROYED
   stream.emit('close')
 
   const rs = stream._readableState
   const ws = stream._writableState
 
-  if (rs !== null && rs.pipeline !== null) rs.pipeline.done(stream, err)
+  if (rs !== null && rs.pipeline !== null) {
+    rs.pipeline.done(stream, err)
+  }
 
   if (ws !== null) {
-    while (ws.drains !== null && ws.drains.length > 0) ws.drains.shift().resolve(false)
-    if (ws.pipeline !== null) ws.pipeline.done(stream, err)
+    while (ws.drains !== null && ws.drains.length > 0) {
+      ws.drains.shift().resolve(false)
+    }
+
+    if (ws.pipeline !== null) {
+      ws.pipeline.done(stream, err)
+    }
   }
 }
 
-function afterWrite (err) {
+function afterWrite(err) {
   const stream = this.stream
 
   if (err) stream.destroy(err)
@@ -61671,6 +56881,7 @@ function afterWrite (err) {
 
   if ((stream._duplexState & WRITE_DRAIN_STATUS) === WRITE_UNDRAINED) {
     stream._duplexState &= WRITE_DRAINED
+
     if ((stream._duplexState & WRITE_EMIT_DRAIN) === WRITE_EMIT_DRAIN) {
       stream.emit('drain')
     }
@@ -61679,28 +56890,32 @@ function afterWrite (err) {
   this.updateCallback()
 }
 
-function afterRead (err) {
+function afterRead(err) {
   if (err) this.stream.destroy(err)
   this.stream._duplexState &= READ_NOT_ACTIVE
-  if (this.readAhead === false && (this.stream._duplexState & READ_RESUMED) === 0) this.stream._duplexState &= READ_NO_READ_AHEAD
+
+  if (this.readAhead === false && (this.stream._duplexState & READ_RESUMED) === 0) {
+    this.stream._duplexState &= READ_NO_READ_AHEAD
+  }
+
   this.updateCallback()
 }
 
-function updateReadNT () {
+function updateReadNT() {
   if ((this.stream._duplexState & READ_UPDATING) === 0) {
     this.stream._duplexState &= READ_NOT_NEXT_TICK
     this.update()
   }
 }
 
-function updateWriteNT () {
+function updateWriteNT() {
   if ((this.stream._duplexState & WRITE_UPDATING) === 0) {
     this.stream._duplexState &= WRITE_NOT_NEXT_TICK
     this.update()
   }
 }
 
-function tickDrains (drains) {
+function tickDrains(drains) {
   for (let i = 0; i < drains.length; i++) {
     // drains.writes are monotonic, so if one is 0 its always the first one
     if (--drains[i].writes === 0) {
@@ -61710,14 +56925,20 @@ function tickDrains (drains) {
   }
 }
 
-function afterOpen (err) {
+function afterOpen(err) {
   const stream = this.stream
 
   if (err) stream.destroy(err)
 
   if ((stream._duplexState & DESTROYING) === 0) {
-    if ((stream._duplexState & READ_PRIMARY_STATUS) === 0) stream._duplexState |= READ_PRIMARY
-    if ((stream._duplexState & WRITE_PRIMARY_STATUS) === 0) stream._duplexState |= WRITE_PRIMARY
+    if ((stream._duplexState & READ_PRIMARY_STATUS) === 0) {
+      stream._duplexState |= READ_PRIMARY
+    }
+
+    if ((stream._duplexState & WRITE_PRIMARY_STATUS) === 0) {
+      stream._duplexState |= WRITE_PRIMARY
+    }
+
     stream.emit('open')
   }
 
@@ -61732,15 +56953,15 @@ function afterOpen (err) {
   }
 }
 
-function afterTransform (err, data) {
+function afterTransform(err, data) {
   if (data !== undefined && data !== null) this.push(data)
   this._writableState.afterWrite(err)
 }
 
-function newListener (name) {
+function newListener(name) {
   if (this._readableState !== null) {
     if (name === 'data') {
-      this._duplexState |= (READ_EMIT_DATA | READ_RESUMED_READ_AHEAD)
+      this._duplexState |= READ_EMIT_DATA | READ_RESUMED_READ_AHEAD
       this._readableState.updateNextTick()
     }
     if (name === 'readable') {
@@ -61758,7 +56979,7 @@ function newListener (name) {
 }
 
 class Stream extends EventEmitter {
-  constructor (opts) {
+  constructor(opts) {
     super()
 
     this._duplexState = 0
@@ -61769,51 +56990,50 @@ class Stream extends EventEmitter {
       if (opts.open) this._open = opts.open
       if (opts.destroy) this._destroy = opts.destroy
       if (opts.predestroy) this._predestroy = opts.predestroy
-      if (opts.signal) {
-        opts.signal.addEventListener('abort', abort.bind(this))
-      }
+      if (opts.signal) opts.signal.addEventListener('abort', abort.bind(this))
     }
 
     this.on('newListener', newListener)
   }
 
-  _open (cb) {
+  _open(cb) {
     cb(null)
   }
 
-  _destroy (cb) {
+  _destroy(cb) {
     cb(null)
   }
 
-  _predestroy () {
+  _predestroy() {
     // does nothing
   }
 
-  get readable () {
+  get readable() {
     return this._readableState !== null ? true : undefined
   }
 
-  get writable () {
+  get writable() {
     return this._writableState !== null ? true : undefined
   }
 
-  get destroyed () {
+  get destroyed() {
     return (this._duplexState & DESTROYED) !== 0
   }
 
-  get destroying () {
+  get destroying() {
     return (this._duplexState & DESTROY_STATUS) !== 0
   }
 
-  destroy (err) {
+  destroy(err) {
     if ((this._duplexState & DESTROY_STATUS) === 0) {
-      if (!err) err = STREAM_DESTROYED
+      if (!err) err = StreamError.STREAM_DESTROYED()
       this._duplexState = (this._duplexState | DESTROYING) & NON_PRIMARY
 
       if (this._readableState !== null) {
         this._readableState.highWaterMark = 0
         this._readableState.error = err
       }
+
       if (this._writableState !== null) {
         this._writableState.highWaterMark = 0
         this._writableState.error = err
@@ -61823,14 +57043,19 @@ class Stream extends EventEmitter {
       this._predestroy()
       this._duplexState &= NOT_PREDESTROYING
 
-      if (this._readableState !== null) this._readableState.updateNextTick()
-      if (this._writableState !== null) this._writableState.updateNextTick()
+      if (this._readableState !== null) {
+        this._readableState.updateNextTick()
+      }
+
+      if (this._writableState !== null) {
+        this._writableState.updateNextTick()
+      }
     }
   }
 }
 
 class Readable extends Stream {
-  constructor (opts) {
+  constructor(opts) {
     super(opts)
 
     this._duplexState |= OPENING | WRITE_DONE | READ_READ_AHEAD
@@ -61844,66 +57069,81 @@ class Readable extends Stream {
     }
   }
 
-  setEncoding (encoding) {
+  static deferred(fn, opts) {
+    const out = new PassThrough(opts)
+
+    fn()
+      .then((src) => {
+        if (src === null) return out.end()
+        if (out.destroying) return
+        pipeline(src, out, noop)
+      })
+      .catch((err) => out.destroy(err))
+
+    return out
+  }
+
+  setEncoding(encoding) {
     const dec = new TextDecoder(encoding)
     const map = this._readableState.map || echo
     this._readableState.map = mapOrSkip
     return this
 
-    function mapOrSkip (data) {
+    function mapOrSkip(data) {
       const next = dec.push(data)
-      return next === '' ? null : map(next)
+      return next === '' && (data.byteLength !== 0 || dec.remaining > 0) ? null : map(next)
     }
   }
 
-  _read (cb) {
+  _read(cb) {
     cb(null)
   }
 
-  pipe (dest, cb) {
+  pipe(dest, cb) {
     this._readableState.updateNextTick()
     this._readableState.pipe(dest, cb)
     return dest
   }
 
-  read () {
+  read() {
     this._readableState.updateNextTick()
     return this._readableState.read()
   }
 
-  push (data) {
-    this._readableState.updateNextTick()
+  push(data) {
+    this._readableState.updateNextTickIfOpen()
     return this._readableState.push(data)
   }
 
-  unshift (data) {
-    this._readableState.updateNextTick()
+  unshift(data) {
+    this._readableState.updateNextTickIfOpen()
     return this._readableState.unshift(data)
   }
 
-  resume () {
+  resume() {
     this._duplexState |= READ_RESUMED_READ_AHEAD
     this._readableState.updateNextTick()
     return this
   }
 
-  pause () {
-    this._duplexState &= (this._readableState.readAhead === false ? READ_PAUSED_NO_READ_AHEAD : READ_PAUSED)
+  pause() {
+    this._duplexState &=
+      this._readableState.readAhead === false ? READ_PAUSED_NO_READ_AHEAD : READ_PAUSED
     return this
   }
 
-  static _fromAsyncIterator (ite, opts) {
+  static _fromAsyncIterator(ite, opts) {
     let destroy
 
     const rs = new Readable({
       ...opts,
-      read (cb) {
+      read(cb) {
         ite.next().then(push).then(cb.bind(null, null)).catch(cb)
       },
-      predestroy () {
+      predestroy() {
         destroy = ite.return()
       },
-      destroy (cb) {
+      destroy(cb) {
         if (!destroy) return cb(null)
         destroy.then(cb.bind(null, null)).catch(cb)
       }
@@ -61911,13 +57151,13 @@ class Readable extends Stream {
 
     return rs
 
-    function push (data) {
+    function push(data) {
       if (data.done) rs.push(null)
       else rs.push(data.value)
     }
   }
 
-  static from (data, opts) {
+  static from(data, opts) {
     if (isReadStreamx(data)) return data
     if (data[asyncIterator]) return this._fromAsyncIterator(data[asyncIterator](), opts)
     if (!Array.isArray(data)) data = data === undefined ? [] : [data]
@@ -61925,37 +57165,42 @@ class Readable extends Stream {
     let i = 0
     return new Readable({
       ...opts,
-      read (cb) {
+      read(cb) {
         this.push(i === data.length ? null : data[i++])
         cb(null)
       }
     })
   }
 
-  static isBackpressured (rs) {
-    return (rs._duplexState & READ_BACKPRESSURE_STATUS) !== 0 || rs._readableState.buffered >= rs._readableState.highWaterMark
+  static isBackpressured(rs) {
+    return (
+      (rs._duplexState & READ_BACKPRESSURE_STATUS) !== 0 ||
+      rs._readableState.buffered >= rs._readableState.highWaterMark
+    )
   }
 
-  static isPaused (rs) {
+  static isPaused(rs) {
     return (rs._duplexState & READ_RESUMED) === 0
   }
 
-  [asyncIterator] () {
+  [asyncIterator]() {
     const stream = this
 
     let error = null
     let promiseResolve = null
     let promiseReject = null
 
-    this.on('error', (err) => { error = err })
+    this.on('error', (err) => {
+      error = err
+    })
     this.on('readable', onreadable)
     this.on('close', onclose)
 
     return {
-      [asyncIterator] () {
+      [asyncIterator]() {
         return this
       },
-      next () {
+      next() {
         return new Promise(function (resolve, reject) {
           promiseResolve = resolve
           promiseReject = reject
@@ -61964,31 +57209,35 @@ class Readable extends Stream {
           else if ((stream._duplexState & DESTROYED) !== 0) ondata(null)
         })
       },
-      return () {
+      return() {
         return destroy(null)
       },
-      throw (err) {
+      throw(err) {
         return destroy(err)
       }
     }
 
-    function onreadable () {
+    function onreadable() {
       if (promiseResolve !== null) ondata(stream.read())
     }
 
-    function onclose () {
+    function onclose() {
       if (promiseResolve !== null) ondata(null)
     }
 
-    function ondata (data) {
+    function ondata(data) {
       if (promiseReject === null) return
-      if (error) promiseReject(error)
-      else if (data === null && (stream._duplexState & READ_DONE) === 0) promiseReject(STREAM_DESTROYED)
-      else promiseResolve({ value: data, done: data === null })
+      if (error) {
+        promiseReject(error)
+      } else if (data === null && (stream._duplexState & READ_DONE) === 0) {
+        promiseReject(StreamError.STREAM_DESTROYED())
+      } else {
+        promiseResolve({ value: data, done: data === null })
+      }
       promiseReject = promiseResolve = null
     }
 
-    function destroy (err) {
+    function destroy(err) {
       stream.destroy(err)
       return new Promise((resolve, reject) => {
         if (stream._duplexState & DESTROYED) return resolve({ value: undefined, done: true })
@@ -62002,7 +57251,7 @@ class Readable extends Stream {
 }
 
 class Writable extends Stream {
-  constructor (opts) {
+  constructor(opts) {
     super(opts)
 
     this._duplexState |= OPENING | READ_DONE
@@ -62016,57 +57265,60 @@ class Writable extends Stream {
     }
   }
 
-  cork () {
+  cork() {
     this._duplexState |= WRITE_CORKED
   }
 
-  uncork () {
+  uncork() {
     this._duplexState &= WRITE_NOT_CORKED
     this._writableState.updateNextTick()
   }
 
-  _writev (batch, cb) {
+  _writev(batch, cb) {
     cb(null)
   }
 
-  _write (data, cb) {
+  _write(data, cb) {
     this._writableState.autoBatch(data, cb)
   }
 
-  _final (cb) {
+  _final(cb) {
     cb(null)
   }
 
-  static isBackpressured (ws) {
+  static isBackpressured(ws) {
     return (ws._duplexState & WRITE_BACKPRESSURE_STATUS) !== 0
   }
 
-  static drained (ws) {
+  static drained(ws) {
     if (ws.destroyed) return Promise.resolve(false)
+
     const state = ws._writableState
-    const pending = (isWritev(ws) ? Math.min(1, state.queue.length) : state.queue.length)
-    const writes = pending + ((ws._duplexState & WRITE_WRITING) ? 1 : 0)
+    const pending = isWritev(ws) ? Math.min(1, state.queue.length) : state.queue.length
+    const writes = pending + (ws._duplexState & WRITE_WRITING ? 1 : 0)
     if (writes === 0) return Promise.resolve(true)
+
     if (state.drains === null) state.drains = []
     return new Promise((resolve) => {
       state.drains.push({ writes, resolve })
     })
   }
 
-  write (data) {
+  write(data) {
     this._writableState.updateNextTick()
     return this._writableState.push(data)
   }
 
-  end (data) {
+  end(data) {
     this._writableState.updateNextTick()
     this._writableState.end(data)
     return this
   }
 }
 
-class Duplex extends Readable { // and Writable
-  constructor (opts) {
+class Duplex extends Readable {
+  // and Writable
+  constructor(opts) {
     super(opts)
 
     this._duplexState = OPENING | (this._duplexState & READ_READ_AHEAD)
@@ -62079,33 +57331,33 @@ class Duplex extends Readable { // and Writable
     }
   }
 
-  cork () {
+  cork() {
     this._duplexState |= WRITE_CORKED
   }
 
-  uncork () {
+  uncork() {
     this._duplexState &= WRITE_NOT_CORKED
     this._writableState.updateNextTick()
   }
 
-  _writev (batch, cb) {
+  _writev(batch, cb) {
     cb(null)
   }
 
-  _write (data, cb) {
+  _write(data, cb) {
     this._writableState.autoBatch(data, cb)
   }
 
-  _final (cb) {
+  _final(cb) {
     cb(null)
   }
 
-  write (data) {
+  write(data) {
     this._writableState.updateNextTick()
     return this._writableState.push(data)
   }
 
-  end (data) {
+  end(data) {
     this._writableState.updateNextTick()
     this._writableState.end(data)
     return this
@@ -62113,7 +57365,7 @@ class Duplex extends Readable { // and Writable
 }
 
 class Transform extends Duplex {
-  constructor (opts) {
+  constructor(opts) {
     super(opts)
     this._transformState = new TransformState(this)
 
@@ -62123,7 +57375,7 @@ class Transform extends Duplex {
     }
   }
 
-  _write (data, cb) {
+  _write(data, cb) {
     if (this._readableState.buffered >= this._readableState.highWaterMark) {
       this._transformState.data = data
     } else {
@@ -62131,7 +57383,7 @@ class Transform extends Duplex {
     }
   }
 
-  _read (cb) {
+  _read(cb) {
     if (this._transformState.data !== null) {
       const data = this._transformState.data
       this._transformState.data = null
@@ -62142,7 +57394,7 @@ class Transform extends Duplex {
     }
   }
 
-  destroy (err) {
+  destroy(err) {
     super.destroy(err)
     if (this._transformState.data !== null) {
       this._transformState.data = null
@@ -62150,15 +57402,15 @@ class Transform extends Duplex {
     }
   }
 
-  _transform (data, cb) {
+  _transform(data, cb) {
     cb(null, data)
   }
 
-  _flush (cb) {
+  _flush(cb) {
     cb(null)
   }
 
-  _final (cb) {
+  _final(cb) {
     this._transformState.afterFinal = cb
     this._flush(transformAfterFlush.bind(this))
   }
@@ -62166,15 +57418,16 @@ class Transform extends Duplex {
 
 class PassThrough extends Transform {}
 
-function transformAfterFlush (err, data) {
+function transformAfterFlush(err, data) {
   const cb = this._transformState.afterFinal
   if (err) return cb(err)
+
   if (data !== null && data !== undefined) this.push(data)
   this.push(null)
   cb(null)
 }
 
-function pipelinePromise (...streams) {
+function pipelinePromise(...streams) {
   return new Promise((resolve, reject) => {
     return pipeline(...streams, (err) => {
       if (err) return reject(err)
@@ -62183,11 +57436,11 @@ function pipelinePromise (...streams) {
   })
 }
 
-function pipeline (stream, ...streams) {
+function pipeline(stream, ...streams) {
   const all = Array.isArray(stream) ? [...stream, ...streams] : [stream, ...streams]
-  const done = (all.length && typeof all[all.length - 1] === 'function') ? all.pop() : null
+  const done = all.length && typeof all[all.length - 1] === 'function' ? all.pop() : null
 
-  if (all.length < 2) throw new Error('Pipeline requires at least 2 streams')
+  if (all.length < 2) throw StreamError.BAD_ARGUMENT('Pipeline requires at least 2 streams')
 
   let src = all[0]
   let dest = null
@@ -62209,7 +57462,8 @@ function pipeline (stream, ...streams) {
   if (done) {
     let fin = false
 
-    const autoDestroy = isStreamx(dest) || !!(dest._writableState && dest._writableState.autoDestroy)
+    const autoDestroy =
+      isStreamx(dest) || !!(dest._writableState && dest._writableState.autoDestroy)
 
     dest.on('error', (err) => {
       if (error === null) error = err
@@ -62221,23 +57475,27 @@ function pipeline (stream, ...streams) {
     })
 
     if (autoDestroy) {
-      dest.on('close', () => done(error || (fin ? null : PREMATURE_CLOSE)))
+      dest.on('close', () => done(error || (fin ? null : StreamError.PREMATURE_CLOSE())))
     }
   }
 
   return dest
 
-  function errorHandle (s, rd, wr, onerror) {
+  function errorHandle(s, rd, wr, onerror) {
     s.on('error', onerror)
     s.on('close', onclose)
 
-    function onclose () {
-      if (rd && s._readableState && !s._readableState.ended) return onerror(PREMATURE_CLOSE)
-      if (wr && s._writableState && !s._writableState.ended) return onerror(PREMATURE_CLOSE)
+    function onclose() {
+      if (rd && s._readableState && !s._readableState.ended) {
+        return onerror(StreamError.PREMATURE_CLOSE())
+      }
+      if (wr && s._writableState && !s._writableState.ended) {
+        return onerror(StreamError.PREMATURE_CLOSE())
+      }
     }
   }
 
-  function onerror (err) {
+  function onerror(err) {
     if (!err || error) return
     error = err
 
@@ -62247,42 +57505,70 @@ function pipeline (stream, ...streams) {
   }
 }
 
-function echo (s) {
+function echo(s) {
   return s
 }
 
-function isStream (stream) {
+function isStream(stream) {
   return !!stream._readableState || !!stream._writableState
 }
 
-function isStreamx (stream) {
+function isStreamx(stream) {
   return typeof stream._duplexState === 'number' && isStream(stream)
 }
 
-function getStreamError (stream) {
-  const err = (stream._readableState && stream._readableState.error) || (stream._writableState && stream._writableState.error)
-  return err === STREAM_DESTROYED ? null : err // only explicit errors
+function isEnding(stream) {
+  return !!stream._readableState && stream._readableState.ending
 }
 
-function isReadStreamx (stream) {
+function isEnded(stream) {
+  return !!stream._readableState && stream._readableState.ended
+}
+
+function isFinishing(stream) {
+  return !!stream._writableState && stream._writableState.ending
+}
+
+function isFinished(stream) {
+  return !!stream._writableState && stream._writableState.ended
+}
+
+function getStreamError(stream, opts = {}) {
+  const err =
+    (stream._readableState && stream._readableState.error) ||
+    (stream._writableState && stream._writableState.error)
+
+  // avoid implicit errors by default
+  return !opts.all && StreamError.isStreamDestroyed(err) ? null : err
+}
+
+function isReadStreamx(stream) {
   return isStreamx(stream) && stream.readable
 }
 
-function isTypedArray (data) {
+function isDisturbed(stream) {
+  return (
+    (stream._duplexState & OPENING) !== OPENING ||
+    (stream._duplexState & DESTROYING) === DESTROYING ||
+    (stream._duplexState & ACTIVE_OR_TICKING) !== 0
+  )
+}
+
+function isTypedArray(data) {
   return typeof data === 'object' && data !== null && typeof data.byteLength === 'number'
 }
 
-function defaultByteLength (data) {
+function defaultByteLength(data) {
   return isTypedArray(data) ? data.byteLength : 1024
 }
 
-function noop () {}
+function noop() {}
 
-function abort () {
-  this.destroy(new Error('Stream aborted.'))
+function abort() {
+  this.destroy(StreamError.ABORTED())
 }
 
-function isWritev (s) {
+function isWritev(s) {
   return s._writev !== Writable.prototype._writev && s._writev !== Duplex.prototype._writev
 }
 
@@ -62291,6 +57577,11 @@ module.exports = {
   pipelinePromise,
   isStream,
   isStreamx,
+  isEnding,
+  isEnded,
+  isFinishing,
+  isFinished,
+  isDisturbed,
   getStreamError,
   Stream,
   Writable,
@@ -62299,6 +57590,60 @@ module.exports = {
   Transform,
   // Export PassThrough for compatibility with Node.js core's stream module
   PassThrough
+}
+
+
+/***/ }),
+
+/***/ 45657:
+/***/ ((module) => {
+
+module.exports = class StreamError extends Error {
+  constructor(msg, code, fn = StreamError) {
+    super(msg)
+
+    this.code = code
+
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, fn)
+    }
+  }
+
+  static isStreamDestroyed(err) {
+    return err && err.code === 'STREAM_DESTROYED'
+  }
+
+  static isPrematureClose(err) {
+    return err && err.code === 'PREMATURE_CLOSE'
+  }
+
+  static isAborted(err) {
+    return err && err.code === 'ABORTED'
+  }
+
+  static isBadArgument(err) {
+    return err && err.code === 'BAD_ARGUMENT'
+  }
+
+  get name() {
+    return 'StreamError'
+  }
+
+  static STREAM_DESTROYED() {
+    return new StreamError('Stream was destroyed', 'STREAM_DESTROYED', StreamError.STREAM_DESTROYED)
+  }
+
+  static PREMATURE_CLOSE(msg = 'Premature close') {
+    return new StreamError(msg, 'PREMATURE_CLOSE', StreamError.PREMATURE_CLOSE)
+  }
+
+  static ABORTED() {
+    return new StreamError('Stream aborted', 'ABORTED', StreamError.ABORTED)
+  }
+
+  static BAD_ARGUMENT(msg = 'Bad argument') {
+    return new StreamError(msg, 'BAD_ARGUMENT', StreamError.BAD_ARGUMENT)
+  }
 }
 
 
@@ -62522,7 +57867,7 @@ const pump = __nccwpck_require__(87898)
 const fs = __nccwpck_require__(79896)
 const path = __nccwpck_require__(16928)
 
-const win32 = (global.Bare?.platform || process.platform) === 'win32'
+const win32 = (global.Bare ? global.Bare.platform : process.platform) === 'win32'
 
 exports.pack = function pack (cwd, opts) {
   if (!cwd) cwd = '.'
@@ -62628,16 +57973,18 @@ function head (list) {
 }
 
 function processGetuid () {
-  return process.getuid ? process.getuid() : -1
+  return (!global.Bare && process.getuid) ? process.getuid() : -1
 }
 
 function processUmask () {
-  return process.umask ? process.umask() : 0
+  return (!global.Bare && process.umask) ? process.umask() : 0
 }
 
 exports.extract = function extract (cwd, opts) {
   if (!cwd) cwd = '.'
   if (!opts) opts = {}
+
+  cwd = path.resolve(cwd)
 
   const xfs = opts.fs || fs
   const ignore = opts.ignore || opts.filter || noop
@@ -62648,6 +57995,7 @@ exports.extract = function extract (cwd, opts) {
   const now = new Date()
   const umask = typeof opts.umask === 'number' ? ~opts.umask : ~processUmask()
   const strict = opts.strict !== false
+  const validateSymLinks = opts.validateSymlinks !== false
 
   let map = opts.map || noop
   let dmode = typeof opts.dmode === 'number' ? opts.dmode : 0
@@ -62681,22 +58029,22 @@ exports.extract = function extract (cwd, opts) {
       return next()
     }
 
-    if (header.type === 'directory') {
-      stack.push([name, header.mtime])
-      return mkdirfix(name, {
-        fs: xfs,
-        own,
-        uid: header.uid,
-        gid: header.gid,
-        mode: header.mode
-      }, stat)
-    }
-
-    const dir = path.dirname(name)
+    const dir = path.join(name, '.') === path.join(cwd, '.') ? cwd : path.dirname(name)
 
     validate(xfs, dir, path.join(cwd, '.'), function (err, valid) {
       if (err) return next(err)
       if (!valid) return next(new Error(dir + ' is not a valid path'))
+
+      if (header.type === 'directory') {
+        stack.push([name, header.mtime])
+        return mkdirfix(name, {
+          fs: xfs,
+          own,
+          uid: header.uid,
+          gid: header.gid,
+          mode: header.mode
+        }, stat)
+      }
 
       mkdirfix(dir, {
         fs: xfs,
@@ -62725,6 +58073,7 @@ exports.extract = function extract (cwd, opts) {
 
     function stat (err) {
       if (err) return next(err)
+      if (path.join(name, '.') === path.join(cwd, '.')) return next() // do not touch the extraction root itself
       utimes(name, header, function (err) {
         if (err) return next(err)
         if (win32) return next()
@@ -62735,38 +58084,63 @@ exports.extract = function extract (cwd, opts) {
     function onsymlink () {
       if (win32) return next() // skip symlinks on win for now before it can be tested
       xfs.unlink(name, function () {
-        xfs.symlink(header.linkname, name, stat)
+        const dst = path.resolve(path.dirname(name), header.linkname)
+        // strip shifts the resolution anchor, so a relative linkname may now escape - reject regardless of validateSymlinks
+        if (!inCwd(dst) && (validateSymLinks || opts.strip)) return next(new Error(name + ' is not a valid symlink'))
+
+        validateNotSymlink(xfs, dst, path.join(cwd, '.'), function (err, valid) {
+          if (err) return next(err)
+          if (!valid && validateSymLinks) return next(new Error(name + ' is not a valid symlink'))
+          xfs.symlink(header.linkname, name, stat)
+        })
       })
     }
 
     function onlink () {
       if (win32) return next() // skip links on win for now before it can be tested
       xfs.unlink(name, function () {
-        const srcpath = path.join(cwd, path.join('/', header.linkname))
+        const link = path.join(cwd, path.join('/', header.linkname))
 
-        xfs.link(srcpath, name, function (err) {
-          if (err && err.code === 'EPERM' && opts.hardlinkAsFilesFallback) {
-            stream = xfs.createReadStream(srcpath)
-            return onfile()
-          }
+        xfs.realpath(link, function (err, dst) {
+          if (err || !inCwd(dst)) return next(new Error(name + ' is not a valid hardlink'))
 
-          stat(err)
+          xfs.link(dst, name, function (err) {
+            if (err && err.code === 'EPERM' && opts.hardlinkAsFilesFallback) {
+              stream = xfs.createReadStream(dst)
+              return onfile()
+            }
+
+            stat(err)
+          })
         })
       })
     }
 
+    function inCwd (dst) {
+      return dst === cwd || dst.startsWith(cwd + path.sep)
+    }
+
     function onfile () {
-      const ws = xfs.createWriteStream(name)
-      const rs = mapStream(stream, header)
-
-      ws.on('error', function (err) { // always forward errors on destroy
-        rs.destroy(err)
+      xfs.lstat(name, function (err, st) {
+        if (!err && st.isSymbolicLink()) return xfs.unlink(name, onwrite) // never write through an existing symlink
+        onwrite()
       })
 
-      pump(rs, ws, function (err) {
+      function onwrite (err) {
         if (err) return next(err)
-        ws.on('close', stat)
-      })
+
+        const ws = xfs.createWriteStream(name)
+        const rs = mapStream(stream, header)
+
+        ws.on('error', function (err) { // always forward errors on destroy
+          rs.destroy(err)
+        })
+
+        pump(rs, ws, function (err) {
+          if (err) return next(err)
+          ws.on('close', stat)
+        })
+      }
     }
   }
 
@@ -62799,7 +58173,7 @@ exports.extract = function extract (cwd, opts) {
 
     if (!chmod) return cb()
 
-    const mode = (header.mode | (header.type === 'directory' ? dmode : fmode)) & umask
+    const mode = (header.mode | (header.type === 'directory' ? dmode : fmode)) & umask & 0o777 // never extract setuid/setgid/sticky bits
 
     if (chown && own) chown.call(xfs, name, header.uid, header.gid, onchown)
     else onchown(null)
@@ -62825,13 +58199,29 @@ exports.extract = function extract (cwd, opts) {
   }
 }
 
+function validateNotSymlink (fs, name, root, cb) {
+  if (name === root) return cb(null, true)
+  if (!name.startsWith(root + path.sep)) return cb(null, false)
+
+  fs.lstat(name, function (err, st) {
+    if (err && err.code !== 'ENOENT' && err.code !== 'EPERM') return cb(err)
+    if (err || !st.isSymbolicLink()) return validateNotSymlink(fs, path.join(name, '..'), root, cb)
+    cb(null, false)
+  })
+}
+
 function validate (fs, name, root, cb) {
   if (name === root) return cb(null, true)
+
   fs.lstat(name, function (err, st) {
-    if (err && err.code === 'ENOENT') return validate(fs, path.join(name, '..'), root, cb)
-    else if (err) return cb(err)
-    cb(null, st.isDirectory())
+    if (err && err.code !== 'ENOENT' && err.code !== 'EPERM') return cb(err)
+    if (err || st.isDirectory()) return validate(fs, path.join(name, '..'), root, cb)
+    cb(null, false)
   })
+}
+
+function inside (root, name) {
+  return name === root || name.startsWith(root + path.sep)
 }
 
 function noop () {}
@@ -62847,12 +58237,15 @@ function normalize (name) {
 function statAll (fs, stat, cwd, ignore, entries, sort) {
   if (!entries) entries = ['.']
   const queue = entries.slice(0)
+  const root = path.resolve(cwd)
 
   return function loop (callback) {
     if (!queue.length) return callback(null)
 
     const next = queue.shift()
     const nextAbs = path.join(cwd, next)
+
+    if (!inside(root, path.resolve(cwd, next))) return callback(new Error(next + ' is not a valid path')) // do not pack outside cwd
 
     stat.call(fs, nextAbs, function (err, stat) {
       // ignore errors if the files were deleted while buffering
@@ -62921,6 +58314,7 @@ const b4a = __nccwpck_require__(73057)
 const headers = __nccwpck_require__(88428)
 
 const EMPTY = b4a.alloc(0)
+const MAX_HEADER_SIZE = 4 * 1024 * 1024 // arbitrary big number
 
 class BufferList {
   constructor () {
@@ -62937,7 +58331,7 @@ class BufferList {
   }
 
   shiftFirst (size) {
-    return this._buffered === 0 ? null : this._next(size)
+    return this.buffered === 0 ? null : this._next(size)
   }
 
   shift (size) {
@@ -63066,6 +58460,8 @@ class Extract extends Writable {
 
     if (!this._header) return true
 
+    this._header.byteOffset = this._buffer.shifted
+
     switch (this._header.type) {
       case 'gnu-long-path':
       case 'gnu-long-link-path':
@@ -63073,11 +58469,20 @@ class Extract extends Writable {
       case 'pax-header':
         this._longHeader = true
         this._missing = this._header.size
+        if (this._missing > MAX_HEADER_SIZE) {
+          this._continueWrite(new Error('Header exceeds max size'))
+          return false
+        }
         return true
     }
 
     this._locked = true
     this._applyLongHeaders()
+
+    if (!(this._header.size >= 0)) {
+      this._continueWrite(new Error('Invalid header'))
+      return false
+    }
 
     if (this._header.size === 0 || this._header.type === 'directory') {
       this.emit('entry', this._header, this._createStream(), this._unlockBound)
@@ -63467,6 +58872,7 @@ exports.decode = function decode (buf, filenameEncoding, allowUnknownFormat) {
     uid,
     gid,
     size,
+    byteOffset: 0,
     mtime: new Date(1000 * mtime),
     type,
     linkname,
@@ -63963,7 +59369,7 @@ const PassThroughDecoder = __nccwpck_require__(47256)
 const UTF8Decoder = __nccwpck_require__(86414)
 
 module.exports = class TextDecoder {
-  constructor (encoding = 'utf8') {
+  constructor(encoding = 'utf8') {
     this.encoding = normalizeEncoding(encoding)
 
     switch (this.encoding) {
@@ -63978,17 +59384,21 @@ module.exports = class TextDecoder {
     }
   }
 
-  push (data) {
+  get remaining() {
+    return this.decoder.remaining
+  }
+
+  push(data) {
     if (typeof data === 'string') return data
     return this.decoder.decode(data)
   }
 
   // For Node.js compatibility
-  write (data) {
+  write(data) {
     return this.push(data)
   }
 
-  end (data) {
+  end(data) {
     let result = ''
     if (data) result = this.push(data)
     result += this.decoder.flush()
@@ -63996,7 +59406,7 @@ module.exports = class TextDecoder {
   }
 }
 
-function normalizeEncoding (encoding) {
+function normalizeEncoding(encoding) {
   encoding = encoding.toLowerCase()
 
   switch (encoding) {
@@ -64018,7 +59428,7 @@ function normalizeEncoding (encoding) {
     default:
       throw new Error('Unknown encoding: ' + encoding)
   }
-};
+}
 
 
 /***/ }),
@@ -64029,15 +59439,19 @@ function normalizeEncoding (encoding) {
 const b4a = __nccwpck_require__(73057)
 
 module.exports = class PassThroughDecoder {
-  constructor (encoding) {
+  constructor(encoding) {
     this.encoding = encoding
   }
 
-  decode (tail) {
-    return b4a.toString(tail, this.encoding)
+  get remaining() {
+    return 0
   }
 
-  flush () {
+  decode(data) {
+    return b4a.toString(data, this.encoding)
+  }
+
+  flush() {
     return ''
   }
 }
@@ -64054,48 +59468,81 @@ const b4a = __nccwpck_require__(73057)
  * https://encoding.spec.whatwg.org/#utf-8-decoder
  */
 module.exports = class UTF8Decoder {
-  constructor () {
-    this.codePoint = 0
-    this.bytesSeen = 0
-    this.bytesNeeded = 0
-    this.lowerBoundary = 0x80
-    this.upperBoundary = 0xbf
+  constructor() {
+    this._reset()
   }
 
-  decode (data) {
-    // If we have a fast path, just sniff if the last part is a boundary
-    if (this.bytesNeeded === 0) {
-      let isBoundary = true
+  get remaining() {
+    return this.bytesSeen
+  }
 
-      for (let i = Math.max(0, data.byteLength - 4), n = data.byteLength; i < n && isBoundary; i++) {
-        isBoundary = data[i] <= 0x7f
-      }
+  decode(data) {
+    if (data.byteLength === 0) return ''
 
-      if (isBoundary) return b4a.toString(data, 'utf8')
+    if (this.bytesNeeded === 0 && trailingIncomplete(data, 0) === 0) {
+      this.bytesSeen = trailingBytesSeen(data)
+      return b4a.toString(data, 'utf8')
     }
 
     let result = ''
+    let start = 0
 
-    for (let i = 0, n = data.byteLength; i < n; i++) {
+    if (this.bytesNeeded > 0) {
+      while (start < data.byteLength) {
+        const byte = data[start]
+
+        if (byte < this.lowerBoundary || byte > this.upperBoundary) {
+          result += '\ufffd'
+          this._reset()
+          break
+        }
+
+        this.lowerBoundary = 0x80
+        this.upperBoundary = 0xbf
+        this.codePoint = (this.codePoint << 6) | (byte & 0x3f)
+        this.bytesSeen++
+        start++
+
+        if (this.bytesSeen === this.bytesNeeded) {
+          result += String.fromCodePoint(this.codePoint)
+          this._reset()
+          break
+        }
+      }
+
+      if (this.bytesNeeded > 0) return result
+    }
+
+    const trailing = trailingIncomplete(data, start)
+    const end = data.byteLength - trailing
+
+    if (end > start) result += b4a.toString(data, 'utf8', start, end)
+
+    for (let i = end; i < data.byteLength; i++) {
       const byte = data[i]
 
       if (this.bytesNeeded === 0) {
         if (byte <= 0x7f) {
+          this.bytesSeen = 0
           result += String.fromCharCode(byte)
         } else if (byte >= 0xc2 && byte <= 0xdf) {
-          this.bytesNeeded = 1
+          this.bytesNeeded = 2
+          this.bytesSeen = 1
           this.codePoint = byte & 0x1f
         } else if (byte >= 0xe0 && byte <= 0xef) {
           if (byte === 0xe0) this.lowerBoundary = 0xa0
           else if (byte === 0xed) this.upperBoundary = 0x9f
-          this.bytesNeeded = 2
+          this.bytesNeeded = 3
+          this.bytesSeen = 1
           this.codePoint = byte & 0xf
         } else if (byte >= 0xf0 && byte <= 0xf4) {
           if (byte === 0xf0) this.lowerBoundary = 0x90
-          if (byte === 0xf4) this.upperBoundary = 0x8f
-          this.bytesNeeded = 3
+          else if (byte === 0xf4) this.upperBoundary = 0x8f
+          this.bytesNeeded = 4
+          this.bytesSeen = 1
           this.codePoint = byte & 0x7
         } else {
+          this.bytesSeen = 1
           result += '\ufffd'
         }
 
@@ -64103,13 +59550,9 @@ module.exports = class UTF8Decoder {
       }
 
       if (byte < this.lowerBoundary || byte > this.upperBoundary) {
-        this.codePoint = 0
-        this.bytesNeeded = 0
-        this.bytesSeen = 0
-        this.lowerBoundary = 0x80
-        this.upperBoundary = 0xbf
-
         result += '\ufffd'
+        i--
+        this._reset()
 
         continue
       }
@@ -64120,29 +59563,89 @@ module.exports = class UTF8Decoder {
       this.codePoint = (this.codePoint << 6) | (byte & 0x3f)
       this.bytesSeen++
 
-      if (this.bytesSeen !== this.bytesNeeded) continue
-
-      result += String.fromCodePoint(this.codePoint)
-
-      this.codePoint = 0
-      this.bytesNeeded = 0
-      this.bytesSeen = 0
+      if (this.bytesSeen === this.bytesNeeded) {
+        result += String.fromCodePoint(this.codePoint)
+        this._reset()
+      }
     }
 
     return result
   }
 
-  flush () {
+  flush() {
     const result = this.bytesNeeded > 0 ? '\ufffd' : ''
+    this._reset()
+    return result
+  }
 
+  _reset() {
     this.codePoint = 0
     this.bytesNeeded = 0
     this.bytesSeen = 0
     this.lowerBoundary = 0x80
     this.upperBoundary = 0xbf
-
-    return result
   }
+}
+
+function trailingIncomplete(data, start) {
+  const len = data.byteLength
+  if (len <= start) return 0
+
+  const limit = Math.max(start, len - 4)
+
+  let i = len - 1
+  while (i > limit && (data[i] & 0xc0) === 0x80) i--
+
+  if (i < start) return 0
+
+  const byte = data[i]
+
+  let needed
+  if (byte <= 0x7f) return 0
+  if (byte >= 0xc2 && byte <= 0xdf) needed = 2
+  else if (byte >= 0xe0 && byte <= 0xef) needed = 3
+  else if (byte >= 0xf0 && byte <= 0xf4) needed = 4
+  else return 0
+
+  const available = len - i
+  return available < needed ? available : 0
+}
+
+function trailingBytesSeen(data) {
+  const len = data.byteLength
+  if (len === 0) return 0
+
+  const last = data[len - 1]
+
+  if (last <= 0x7f) return 0
+  if ((last & 0xc0) !== 0x80) return 1
+
+  const limit = Math.max(0, len - 4)
+
+  let i = len - 2
+  while (i >= limit && (data[i] & 0xc0) === 0x80) i--
+
+  if (i < 0) return 1
+
+  const first = data[i]
+
+  let needed
+  if (first >= 0xc2 && first <= 0xdf) needed = 2
+  else if (first >= 0xe0 && first <= 0xef) needed = 3
+  else if (first >= 0xf0 && first <= 0xf4) needed = 4
+  else return 1
+
+  if (len - i !== needed) return 1
+
+  if (needed >= 3) {
+    const second = data[i + 1]
+    if (first === 0xe0 && second < 0xa0) return 1
+    if (first === 0xed && second > 0x9f) return 1
+    if (first === 0xf0 && second < 0x90) return 1
+    if (first === 0xf4 && second > 0x8f) return 1
+  }
+
+  return 0
 }
 
 
@@ -64280,7 +59783,7 @@ LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
 OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 ***************************************************************************** */
-/* global global, define, Symbol, Reflect, Promise, SuppressedError */
+/* global global, define, Symbol, Reflect, Promise, SuppressedError, Iterator */
 var __extends;
 var __assign;
 var __rest;
@@ -64312,6 +59815,7 @@ var __classPrivateFieldIn;
 var __createBinding;
 var __addDisposableResource;
 var __disposeResources;
+var __rewriteRelativeImportExtension;
 (function (factory) {
     var root = typeof global === "object" ? global : typeof self === "object" ? self : typeof this === "object" ? this : {};
     if (typeof define === "function" && define.amd) {
@@ -64439,8 +59943,8 @@ var __disposeResources;
     };
 
     __generator = function (thisArg, body) {
-        var _ = { label: 0, sent: function() { if (t[0] & 1) throw t[1]; return t[1]; }, trys: [], ops: [] }, f, y, t, g;
-        return g = { next: verb(0), "throw": verb(1), "return": verb(2) }, typeof Symbol === "function" && (g[Symbol.iterator] = function() { return this; }), g;
+        var _ = { label: 0, sent: function() { if (t[0] & 1) throw t[1]; return t[1]; }, trys: [], ops: [] }, f, y, t, g = Object.create((typeof Iterator === "function" ? Iterator : Object).prototype);
+        return g.next = verb(0), g["throw"] = verb(1), g["return"] = verb(2), typeof Symbol === "function" && (g[Symbol.iterator] = function() { return this; }), g;
         function verb(n) { return function (v) { return step([n, v]); }; }
         function step(op) {
             if (f) throw new TypeError("Generator is already executing.");
@@ -64544,7 +60048,7 @@ var __disposeResources;
     __asyncGenerator = function (thisArg, _arguments, generator) {
         if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
         var g = generator.apply(thisArg, _arguments || []), i, q = [];
-        return i = {}, verb("next"), verb("throw"), verb("return", awaitReturn), i[Symbol.asyncIterator] = function () { return this; }, i;
+        return i = Object.create((typeof AsyncIterator === "function" ? AsyncIterator : Object).prototype), verb("next"), verb("throw"), verb("return", awaitReturn), i[Symbol.asyncIterator] = function () { return this; }, i;
         function awaitReturn(f) { return function (v) { return Promise.resolve(v).then(f, reject); }; }
         function verb(n, f) { if (g[n]) { i[n] = function (v) { return new Promise(function (a, b) { q.push([n, v, a, b]) > 1 || resume(n, v); }); }; if (f) i[n] = f(i[n]); } }
         function resume(n, v) { try { step(g[n](v)); } catch (e) { settle(q[0][3], e); } }
@@ -64579,10 +60083,19 @@ var __disposeResources;
         o["default"] = v;
     };
 
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+
     __importStar = function (mod) {
         if (mod && mod.__esModule) return mod;
         var result = {};
-        if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
         __setModuleDefault(result, mod);
         return result;
     };
@@ -64642,20 +60155,34 @@ var __disposeResources;
             env.error = env.hasError ? new _SuppressedError(e, env.error, "An error was suppressed during disposal.") : e;
             env.hasError = true;
         }
+        var r, s = 0;
         function next() {
-            while (env.stack.length) {
-                var rec = env.stack.pop();
+            while (r = env.stack.pop()) {
                 try {
-                    var result = rec.dispose && rec.dispose.call(rec.value);
-                    if (rec.async) return Promise.resolve(result).then(next, function(e) { fail(e); return next(); });
+                    if (!r.async && s === 1) return s = 0, env.stack.push(r), Promise.resolve().then(next);
+                    if (r.dispose) {
+                        var result = r.dispose.call(r.value);
+                        if (r.async) return s |= 2, Promise.resolve(result).then(next, function(e) { fail(e); return next(); });
+                    }
+                    else s |= 1;
                 }
                 catch (e) {
                     fail(e);
                 }
             }
+            if (s === 1) return env.hasError ? Promise.reject(env.error) : Promise.resolve();
             if (env.hasError) throw env.error;
         }
         return next();
+    };
+
+    __rewriteRelativeImportExtension = function (path, preserveJsx) {
+        if (typeof path === "string" && /^\.\.?\//.test(path)) {
+            return path.replace(/\.(tsx)$|((?:\.d)?)((?:\.[^./]+?)?)\.([cm]?)ts$/i, function (m, tsx, d, ext, cm) {
+                return tsx ? preserveJsx ? ".jsx" : ".js" : d && (!ext || !cm) ? m : (d + ext + "." + cm.toLowerCase() + "js");
+            });
+        }
+        return path;
     };
 
     exporter("__extends", __extends);
@@ -64689,7 +60216,10 @@ var __disposeResources;
     exporter("__classPrivateFieldIn", __classPrivateFieldIn);
     exporter("__addDisposableResource", __addDisposableResource);
     exporter("__disposeResources", __disposeResources);
+    exporter("__rewriteRelativeImportExtension", __rewriteRelativeImportExtension);
 });
+
+0 && (0);
 
 
 /***/ }),
@@ -257803,38 +253333,6 @@ module.exports = bzip2;
 
 /***/ }),
 
-/***/ 95077:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-
-exports.fromCallback = function (fn) {
-  return Object.defineProperty(function (...args) {
-    if (typeof args[args.length - 1] === 'function') fn.apply(this, args)
-    else {
-      return new Promise((resolve, reject) => {
-        args.push((err, res) => (err != null) ? reject(err) : resolve(res))
-        fn.apply(this, args)
-      })
-    }
-  }, 'name', { value: fn.name })
-}
-
-exports.fromPromise = function (fn) {
-  return Object.defineProperty(function (...args) {
-    const cb = args[args.length - 1]
-    if (typeof cb !== 'function') return fn.apply(this, args)
-    else {
-      args.pop()
-      fn.apply(this, args).then(r => cb(null, r), cb)
-    }
-  }, 'name', { value: fn.name })
-}
-
-
-/***/ }),
-
 /***/ 43236:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -258105,15 +253603,24 @@ function wrappy (fn, cb) {
 "use strict";
 
 
+const createWebSocketStream = __nccwpck_require__(86412);
+const extension = __nccwpck_require__(61335);
+const PerMessageDeflate = __nccwpck_require__(4376);
+const Receiver = __nccwpck_require__(20893);
+const Sender = __nccwpck_require__(7389);
+const subprotocol = __nccwpck_require__(43332);
 const WebSocket = __nccwpck_require__(56681);
+const WebSocketServer = __nccwpck_require__(70129);
 
-WebSocket.createWebSocketStream = __nccwpck_require__(86412);
-WebSocket.Server = __nccwpck_require__(70129);
-WebSocket.Receiver = __nccwpck_require__(20893);
-WebSocket.Sender = __nccwpck_require__(7389);
-
+WebSocket.createWebSocketStream = createWebSocketStream;
+WebSocket.extension = extension;
+WebSocket.PerMessageDeflate = PerMessageDeflate;
+WebSocket.Receiver = Receiver;
+WebSocket.Sender = Sender;
+WebSocket.Server = WebSocketServer;
+WebSocket.subprotocol = subprotocol;
 WebSocket.WebSocket = WebSocket;
-WebSocket.WebSocketServer = WebSocket.Server;
+WebSocket.WebSocketServer = WebSocketServer;
 
 module.exports = WebSocket;
 
@@ -258272,6 +253779,7 @@ if (hasBlob) BINARY_TYPES.push('blob');
 
 module.exports = {
   BINARY_TYPES,
+  CLOSE_TIMEOUT: 30000,
   EMPTY_BUFFER: Buffer.alloc(0),
   GUID: '258EAFA5-E914-47DA-95CA-C5AB0DC85B11',
   hasBlob,
@@ -258902,6 +254410,9 @@ class PerMessageDeflate {
    *     acknowledge disabling of client context takeover
    * @param {Number} [options.concurrencyLimit=10] The number of concurrent
    *     calls to zlib
+   * @param {Boolean} [options.isServer=false] Create the instance in either
+   *     server or client mode
+   * @param {Number} [options.maxPayload=0] The maximum allowed message length
    * @param {(Boolean|Number)} [options.serverMaxWindowBits] Request/confirm the
    *     use of a custom server window size
    * @param {Boolean} [options.serverNoContextTakeover=false] Request/accept
@@ -258912,16 +254423,13 @@ class PerMessageDeflate {
    *     deflate
    * @param {Object} [options.zlibInflateOptions] Options to pass to zlib on
    *     inflate
-   * @param {Boolean} [isServer=false] Create the instance in either server or
-   *     client mode
-   * @param {Number} [maxPayload=0] The maximum allowed message length
    */
-  constructor(options, isServer, maxPayload) {
-    this._maxPayload = maxPayload | 0;
+  constructor(options) {
     this._options = options || {};
     this._threshold =
       this._options.threshold !== undefined ? this._options.threshold : 1024;
-    this._isServer = !!isServer;
+    this._maxPayload = this._options.maxPayload | 0;
+    this._isServer = !!this._options.isServer;
     this._deflate = null;
     this._inflate = null;
 
@@ -259032,7 +254540,9 @@ class PerMessageDeflate {
             (typeof opts.serverMaxWindowBits === 'number' &&
               opts.serverMaxWindowBits > params.server_max_window_bits))) ||
         (typeof opts.clientMaxWindowBits === 'number' &&
-          !params.client_max_window_bits)
+          (typeof params.client_max_window_bits === 'number'
+            ? opts.clientMaxWindowBits > params.client_max_window_bits
+            : !params.client_max_window_bits))
       ) {
         return false;
       }
@@ -259359,6 +254869,14 @@ function inflateOnData(chunk) {
   this[kError].code = 'WS_ERR_UNSUPPORTED_MESSAGE_LENGTH';
   this[kError][kStatusCode] = 1009;
   this.removeListener('data', inflateOnData);
+
+  //
+  // The choice to employ `zlib.reset()` over `zlib.close()` is dictated by the
+  // fact that in Node.js versions prior to 13.10.0, the callback for
+  // `zlib.flush()` is not called if `zlib.close()` is used. Utilizing
+  // `zlib.reset()` ensures that either the callback is invoked or an error is
+  // emitted.
+  //
   this.reset();
 }
 
@@ -259374,6 +254892,12 @@ function inflateOnError(err) {
   // closed when an error is emitted.
   //
   this[kPerMessageDeflate]._inflate = null;
+
+  if (this[kError]) {
+    this[kCallback](this[kError]);
+    return;
+  }
+
   err[kStatusCode] = 1007;
   this[kCallback](err);
 }
@@ -259427,6 +254951,10 @@ class Receiver extends Writable {
    *     extensions
    * @param {Boolean} [options.isServer=false] Specifies whether to operate in
    *     client or server mode
+   * @param {Number} [options.maxBufferedChunks=0] The maximum number of
+   *     buffered data chunks
+   * @param {Number} [options.maxFragments=0] The maximum number of message
+   *     fragments
    * @param {Number} [options.maxPayload=0] The maximum allowed message length
    * @param {Boolean} [options.skipUTF8Validation=false] Specifies whether or
    *     not to skip UTF-8 validation for text and close messages
@@ -259441,6 +254969,8 @@ class Receiver extends Writable {
     this._binaryType = options.binaryType || BINARY_TYPES[0];
     this._extensions = options.extensions || {};
     this._isServer = !!options.isServer;
+    this._maxBufferedChunks = options.maxBufferedChunks | 0;
+    this._maxFragments = options.maxFragments | 0;
     this._maxPayload = options.maxPayload | 0;
     this._skipUTF8Validation = !!options.skipUTF8Validation;
     this[kWebSocket] = undefined;
@@ -259458,6 +254988,7 @@ class Receiver extends Writable {
 
     this._totalPayloadLength = 0;
     this._messageLength = 0;
+    this._numFragments = 0;
     this._fragments = [];
 
     this._errored = false;
@@ -259475,6 +255006,22 @@ class Receiver extends Writable {
    */
   _write(chunk, encoding, cb) {
     if (this._opcode === 0x08 && this._state == GET_INFO) return cb();
+
+    if (
+      this._maxBufferedChunks > 0 &&
+      this._buffers.length >= this._maxBufferedChunks
+    ) {
+      cb(
+        this.createError(
+          RangeError,
+          'Too many buffered chunks',
+          false,
+          1008,
+          'WS_ERR_TOO_MANY_BUFFERED_PARTS'
+        )
+      );
+      return;
+    }
 
     this._bufferedBytes += chunk.length;
     this._buffers.push(chunk);
@@ -259865,6 +255412,19 @@ class Receiver extends Writable {
       return;
     }
 
+    if (this._maxFragments > 0 && ++this._numFragments > this._maxFragments) {
+      const error = this.createError(
+        RangeError,
+        'Too many message fragments',
+        false,
+        1008,
+        'WS_ERR_TOO_MANY_BUFFERED_PARTS'
+      );
+
+      cb(error);
+      return;
+    }
+
     if (this._compressed) {
       this._state = INFLATING;
       this.decompress(data, cb);
@@ -259937,6 +255497,7 @@ class Receiver extends Writable {
     this._totalPayloadLength = 0;
     this._messageLength = 0;
     this._fragmented = 0;
+    this._numFragments = 0;
     this._fragments = [];
 
     if (this._opcode === 2) {
@@ -260105,6 +255666,9 @@ module.exports = Receiver;
 
 const { Duplex } = __nccwpck_require__(2203);
 const { randomFillSync } = __nccwpck_require__(76982);
+const {
+  types: { isUint8Array }
+} = __nccwpck_require__(39023);
 
 const PerMessageDeflate = __nccwpck_require__(4376);
 const { EMPTY_BUFFER, kWebSocket, NOOP } = __nccwpck_require__(71791);
@@ -260301,8 +255865,10 @@ class Sender {
 
       if (typeof data === 'string') {
         buf.write(data, 2);
-      } else {
+      } else if (isUint8Array(data)) {
         buf.set(data, 2);
+      } else {
+        throw new TypeError('Second argument must be a string or a Uint8Array');
       }
     }
 
@@ -260652,7 +256218,7 @@ class Sender {
   /**
    * Sends a frame.
    *
-   * @param {Buffer[]} list The frame to send
+   * @param {(Buffer | String)[]} list The frame to send
    * @param {Function} [cb] Callback
    * @private
    */
@@ -260709,8 +256275,10 @@ function onError(sender, err, cb) {
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 "use strict";
+/* eslint no-unused-vars: ["error", { "varsIgnorePattern": "^WebSocket$" }] */
 
 
+const WebSocket = __nccwpck_require__(56681);
 const { Duplex } = __nccwpck_require__(2203);
 
 /**
@@ -261119,7 +256687,7 @@ const extension = __nccwpck_require__(61335);
 const PerMessageDeflate = __nccwpck_require__(4376);
 const subprotocol = __nccwpck_require__(43332);
 const WebSocket = __nccwpck_require__(56681);
-const { GUID, kWebSocket } = __nccwpck_require__(71791);
+const { CLOSE_TIMEOUT, GUID, kWebSocket } = __nccwpck_require__(71791);
 
 const keyRegex = /^[+/0-9A-Za-z]{22}==$/;
 
@@ -261146,8 +256714,15 @@ class WebSocketServer extends EventEmitter {
    *     pending connections
    * @param {Boolean} [options.clientTracking=true] Specifies whether or not to
    *     track clients
+   * @param {Number} [options.closeTimeout=30000] Duration in milliseconds to
+   *     wait for the closing handshake to finish after `websocket.close()` is
+   *     called
    * @param {Function} [options.handleProtocols] A hook to handle protocols
    * @param {String} [options.host] The hostname where to bind the server
+   * @param {Number} [options.maxBufferedChunks=262144] The maximum number of
+   *     buffered data chunks
+   * @param {Number} [options.maxFragments=16384] The maximum number of message
+   *     fragments
    * @param {Number} [options.maxPayload=104857600] The maximum allowed message
    *     size
    * @param {Boolean} [options.noServer=false] Enable no server mode
@@ -261170,11 +256745,14 @@ class WebSocketServer extends EventEmitter {
     options = {
       allowSynchronousEvents: true,
       autoPong: true,
+      maxBufferedChunks: 256 * 1024,
+      maxFragments: 16 * 1024,
       maxPayload: 100 * 1024 * 1024,
       skipUTF8Validation: false,
       perMessageDeflate: false,
       handleProtocols: null,
       clientTracking: true,
+      closeTimeout: CLOSE_TIMEOUT,
       verifyClient: null,
       noServer: false,
       backlog: null, // use default (511 as implemented in net.js)
@@ -261364,9 +256942,11 @@ class WebSocketServer extends EventEmitter {
       return;
     }
 
-    if (version !== 8 && version !== 13) {
+    if (version !== 13 && version !== 8) {
       const message = 'Missing or invalid Sec-WebSocket-Version header';
-      abortHandshakeOrEmitwsClientError(this, req, socket, 400, message);
+      abortHandshakeOrEmitwsClientError(this, req, socket, 400, message, {
+        'Sec-WebSocket-Version': '13, 8'
+      });
       return;
     }
 
@@ -261395,11 +256975,11 @@ class WebSocketServer extends EventEmitter {
       this.options.perMessageDeflate &&
       secWebSocketExtensions !== undefined
     ) {
-      const perMessageDeflate = new PerMessageDeflate(
-        this.options.perMessageDeflate,
-        true,
-        this.options.maxPayload
-      );
+      const perMessageDeflate = new PerMessageDeflate({
+        ...this.options.perMessageDeflate,
+        isServer: true,
+        maxPayload: this.options.maxPayload
+      });
 
       try {
         const offers = extension.parse(secWebSocketExtensions);
@@ -261526,6 +257106,8 @@ class WebSocketServer extends EventEmitter {
 
     ws.setSocket(socket, head, {
       allowSynchronousEvents: this.options.allowSynchronousEvents,
+      maxBufferedChunks: this.options.maxBufferedChunks,
+      maxFragments: this.options.maxFragments,
       maxPayload: this.options.maxPayload,
       skipUTF8Validation: this.options.skipUTF8Validation
     });
@@ -261634,16 +257216,24 @@ function abortHandshake(socket, code, message, headers) {
  * @param {Duplex} socket The socket of the upgrade request
  * @param {Number} code The HTTP response status code
  * @param {String} message The HTTP response body
+ * @param {Object} [headers] The HTTP response headers
  * @private
  */
-function abortHandshakeOrEmitwsClientError(server, req, socket, code, message) {
+function abortHandshakeOrEmitwsClientError(
+  server,
+  req,
+  socket,
+  code,
+  message,
+  headers
+) {
   if (server.listenerCount('wsClientError')) {
     const err = new Error(message);
     Error.captureStackTrace(err, abortHandshakeOrEmitwsClientError);
 
     server.emit('wsClientError', err, socket, req);
   } else {
-    abortHandshake(socket, code, message);
+    abortHandshake(socket, code, message, headers);
   }
 }
 
@@ -261674,6 +257264,7 @@ const { isBlob } = __nccwpck_require__(26615);
 
 const {
   BINARY_TYPES,
+  CLOSE_TIMEOUT,
   EMPTY_BUFFER,
   GUID,
   kForOnEventAttribute,
@@ -261688,7 +257279,6 @@ const {
 const { format, parse } = __nccwpck_require__(61335);
 const { toBuffer } = __nccwpck_require__(95803);
 
-const closeTimeout = 30 * 1000;
 const kAborted = Symbol('kAborted');
 const protocolVersions = [8, 13];
 const readyStates = ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'];
@@ -261744,6 +257334,7 @@ class WebSocket extends EventEmitter {
       initAsClient(this, address, protocols, options);
     } else {
       this._autoPong = options.autoPong;
+      this._closeTimeout = options.closeTimeout;
       this._isServer = true;
     }
   }
@@ -261856,6 +257447,10 @@ class WebSocket extends EventEmitter {
    *     multiple times in the same tick
    * @param {Function} [options.generateMask] The function used to generate the
    *     masking key
+   * @param {Number} [options.maxBufferedChunks=0] The maximum number of
+   *     buffered data chunks
+   * @param {Number} [options.maxFragments=0] The maximum number of message
+   *     fragments
    * @param {Number} [options.maxPayload=0] The maximum allowed message size
    * @param {Boolean} [options.skipUTF8Validation=false] Specifies whether or
    *     not to skip UTF-8 validation for text and close messages
@@ -261867,6 +257462,8 @@ class WebSocket extends EventEmitter {
       binaryType: this.binaryType,
       extensions: this._extensions,
       isServer: this._isServer,
+      maxBufferedChunks: options.maxBufferedChunks,
+      maxFragments: options.maxFragments,
       maxPayload: options.maxPayload,
       skipUTF8Validation: options.skipUTF8Validation
     });
@@ -262285,6 +257882,8 @@ module.exports = WebSocket;
  *     times in the same tick
  * @param {Boolean} [options.autoPong=true] Specifies whether or not to
  *     automatically send a pong in response to a ping
+ * @param {Number} [options.closeTimeout=30000] Duration in milliseconds to wait
+ *     for the closing handshake to finish after `websocket.close()` is called
  * @param {Function} [options.finishRequest] A function which can be used to
  *     customize the headers of each http request before it is sent
  * @param {Boolean} [options.followRedirects=false] Whether or not to follow
@@ -262293,6 +257892,10 @@ module.exports = WebSocket;
  *     masking key
  * @param {Number} [options.handshakeTimeout] Timeout in milliseconds for the
  *     handshake request
+ * @param {Number} [options.maxBufferedChunks=262144] The maximum number of
+ *     buffered data chunks
+ * @param {Number} [options.maxFragments=16384] The maximum number of message
+ *     fragments
  * @param {Number} [options.maxPayload=104857600] The maximum allowed message
  *     size
  * @param {Number} [options.maxRedirects=10] The maximum number of redirects
@@ -262311,7 +257914,10 @@ function initAsClient(websocket, address, protocols, options) {
   const opts = {
     allowSynchronousEvents: true,
     autoPong: true,
+    closeTimeout: CLOSE_TIMEOUT,
     protocolVersion: protocolVersions[1],
+    maxBufferedChunks: 256 * 1024,
+    maxFragments: 16 * 1024,
     maxPayload: 100 * 1024 * 1024,
     skipUTF8Validation: false,
     perMessageDeflate: true,
@@ -262329,6 +257935,7 @@ function initAsClient(websocket, address, protocols, options) {
   };
 
   websocket._autoPong = opts.autoPong;
+  websocket._closeTimeout = opts.closeTimeout;
 
   if (!protocolVersions.includes(opts.protocolVersion)) {
     throw new RangeError(
@@ -262344,7 +257951,7 @@ function initAsClient(websocket, address, protocols, options) {
   } else {
     try {
       parsedUrl = new URL(address);
-    } catch (e) {
+    } catch {
       throw new SyntaxError(`Invalid URL: ${address}`);
     }
   }
@@ -262364,7 +257971,7 @@ function initAsClient(websocket, address, protocols, options) {
   if (parsedUrl.protocol !== 'ws:' && !isSecure && !isIpcUrl) {
     invalidUrlMessage =
       'The URL\'s protocol must be one of "ws:", "wss:", ' +
-      '"http:", "https", or "ws+unix:"';
+      '"http:", "https:", or "ws+unix:"';
   } else if (isIpcUrl && !parsedUrl.pathname) {
     invalidUrlMessage = "The URL's pathname is empty";
   } else if (parsedUrl.hash) {
@@ -262406,11 +258013,11 @@ function initAsClient(websocket, address, protocols, options) {
   opts.timeout = opts.handshakeTimeout;
 
   if (opts.perMessageDeflate) {
-    perMessageDeflate = new PerMessageDeflate(
-      opts.perMessageDeflate !== true ? opts.perMessageDeflate : {},
-      false,
-      opts.maxPayload
-    );
+    perMessageDeflate = new PerMessageDeflate({
+      ...opts.perMessageDeflate,
+      isServer: false,
+      maxPayload: opts.maxPayload
+    });
     opts.headers['Sec-WebSocket-Extensions'] = format({
       [PerMessageDeflate.extensionName]: perMessageDeflate.offer()
     });
@@ -262668,6 +258275,8 @@ function initAsClient(websocket, address, protocols, options) {
     websocket.setSocket(socket, head, {
       allowSynchronousEvents: opts.allowSynchronousEvents,
       generateMask: opts.generateMask,
+      maxBufferedChunks: opts.maxBufferedChunks,
+      maxFragments: opts.maxFragments,
       maxPayload: opts.maxPayload,
       skipUTF8Validation: opts.skipUTF8Validation
     });
@@ -262946,7 +258555,7 @@ function senderOnError(err) {
 function setCloseTimer(websocket) {
   websocket._closeTimer = setTimeout(
     websocket._socket.destroy.bind(websocket._socket),
-    closeTimeout
+    websocket._closeTimeout
   );
 }
 
@@ -262964,23 +258573,23 @@ function socketOnClose() {
 
   websocket._readyState = WebSocket.CLOSING;
 
-  let chunk;
-
   //
   // The close frame might not have been received or the `'end'` event emitted,
   // for example, if the socket was destroyed due to an error. Ensure that the
   // `receiver` stream is closed after writing any remaining buffered data to
   // it. If the readable side of the socket is in flowing mode then there is no
-  // buffered data as everything has been already written and `readable.read()`
-  // will return `null`. If instead, the socket is paused, any possible buffered
-  // data will be read as a single chunk.
+  // buffered data as everything has been already written. If instead, the
+  // socket is paused, any possible buffered data will be read as a single
+  // chunk.
   //
   if (
     !this._readableState.endEmitted &&
     !websocket._closeFrameReceived &&
     !websocket._receiver._writableState.errorEmitted &&
-    (chunk = websocket._socket.read()) !== null
+    this._readableState.length !== 0
   ) {
+    const chunk = this.read(this._readableState.length);
+
     websocket._receiver.write(chunk);
   }
 
@@ -263954,14 +259563,6 @@ module.exports = require("child_process");
 
 /***/ }),
 
-/***/ 49140:
-/***/ ((module) => {
-
-"use strict";
-module.exports = require("constants");
-
-/***/ }),
-
 /***/ 76982:
 /***/ ((module) => {
 
@@ -264144,36 +259745,97 @@ module.exports = require("zlib");
 "use strict";
 
 
-Object.defineProperty(exports, "__esModule", ({
-  value: true
-}));
-exports.codeFrameColumns = codeFrameColumns;
-exports["default"] = _default;
-var _highlight = __nccwpck_require__(26270);
-var _picocolors = _interopRequireWildcard(__nccwpck_require__(57336), true);
-function _getRequireWildcardCache(e) { if ("function" != typeof WeakMap) return null; var r = new WeakMap(), t = new WeakMap(); return (_getRequireWildcardCache = function (e) { return e ? t : r; })(e); }
-function _interopRequireWildcard(e, r) { if (!r && e && e.__esModule) return e; if (null === e || "object" != typeof e && "function" != typeof e) return { default: e }; var t = _getRequireWildcardCache(r); if (t && t.has(e)) return t.get(e); var n = { __proto__: null }, a = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var u in e) if ("default" !== u && {}.hasOwnProperty.call(e, u)) { var i = a ? Object.getOwnPropertyDescriptor(e, u) : null; i && (i.get || i.set) ? Object.defineProperty(n, u, i) : n[u] = e[u]; } return n.default = e, t && t.set(e, n), n; }
-const colors = typeof process === "object" && (process.env.FORCE_COLOR === "0" || process.env.FORCE_COLOR === "false") ? (0, _picocolors.createColors)(false) : _picocolors.default;
-const compose = (f, g) => v => f(g(v));
-let pcWithForcedColor = undefined;
-function getColors(forceColor) {
-  if (forceColor) {
-    var _pcWithForcedColor;
-    (_pcWithForcedColor = pcWithForcedColor) != null ? _pcWithForcedColor : pcWithForcedColor = (0, _picocolors.createColors)(true);
-    return pcWithForcedColor;
-  }
-  return colors;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+var picocolors = __nccwpck_require__(57336);
+var jsTokens = __nccwpck_require__(85756);
+var helperValidatorIdentifier = __nccwpck_require__(76599);
+
+function isColorSupported() {
+  return (typeof process === "object" && (process.env.FORCE_COLOR === "0" || process.env.FORCE_COLOR === "false") ? false : picocolors.isColorSupported
+  );
 }
-let deprecationWarningShown = false;
-function getDefs(colors) {
+const compose = (f, g) => v => f(g(v));
+function buildDefs(colors) {
   return {
+    keyword: colors.cyan,
+    capitalized: colors.yellow,
+    jsxIdentifier: colors.yellow,
+    punctuator: colors.yellow,
+    number: colors.magenta,
+    string: colors.green,
+    regex: colors.magenta,
+    comment: colors.gray,
+    invalid: compose(compose(colors.white, colors.bgRed), colors.bold),
     gutter: colors.gray,
     marker: compose(colors.red, colors.bold),
-    message: compose(colors.red, colors.bold)
+    message: compose(colors.red, colors.bold),
+    reset: colors.reset
   };
 }
+const defsOn = buildDefs(picocolors.createColors(true));
+const defsOff = buildDefs(picocolors.createColors(false));
+function getDefs(enabled) {
+  return enabled ? defsOn : defsOff;
+}
+
+const sometimesKeywords = new Set(["as", "async", "from", "get", "of", "set"]);
+const NEWLINE$1 = /\r\n|[\n\r\u2028\u2029]/;
+const BRACKET = /^[()[\]{}]$/;
+let tokenize;
+const JSX_TAG = /^[a-z][\w-]*$/i;
+const getTokenType = function (token, offset, text) {
+  if (token.type === "name") {
+    const tokenValue = token.value;
+    if (helperValidatorIdentifier.isKeyword(tokenValue) || helperValidatorIdentifier.isStrictReservedWord(tokenValue, true) || sometimesKeywords.has(tokenValue)) {
+      return "keyword";
+    }
+    if (JSX_TAG.test(tokenValue) && (text[offset - 1] === "<" || text.slice(offset - 2, offset) === "</")) {
+      return "jsxIdentifier";
+    }
+    const firstChar = String.fromCodePoint(tokenValue.codePointAt(0));
+    if (firstChar !== firstChar.toLowerCase()) {
+      return "capitalized";
+    }
+  }
+  if (token.type === "punctuator" && BRACKET.test(token.value)) {
+    return "bracket";
+  }
+  if (token.type === "invalid" && (token.value === "@" || token.value === "#")) {
+    return "punctuator";
+  }
+  return token.type;
+};
+tokenize = function* (text) {
+  let match;
+  while (match = jsTokens.default.exec(text)) {
+    const token = jsTokens.matchToToken(match);
+    yield {
+      type: getTokenType(token, match.index, text),
+      value: token.value
+    };
+  }
+};
+function highlight(text) {
+  if (text === "") return "";
+  const defs = getDefs(true);
+  let highlighted = "";
+  for (const {
+    type,
+    value
+  } of tokenize(text)) {
+    if (type in defs) {
+      highlighted += value.split(NEWLINE$1).map(str => defs[type](str)).join("\n");
+    } else {
+      highlighted += value;
+    }
+  }
+  return highlighted;
+}
+
+let deprecationWarningShown = false;
 const NEWLINE = /\r\n|[\n\r\u2028\u2029]/;
-function getMarkerLines(loc, source, opts) {
+function getMarkerLines(loc, source, opts, startLineBaseZero) {
   const startLoc = Object.assign({
     column: 0,
     line: -1
@@ -264183,9 +259845,9 @@ function getMarkerLines(loc, source, opts) {
     linesAbove = 2,
     linesBelow = 3
   } = opts || {};
-  const startLine = startLoc.line;
+  const startLine = startLoc.line - startLineBaseZero;
   const startColumn = startLoc.column;
-  const endLine = endLoc.line;
+  const endLine = endLoc.line - startLineBaseZero;
   const endColumn = endLoc.column;
   let start = Math.max(startLine - (linesAbove + 1), 0);
   let end = Math.min(source.length, endLine + linesBelow);
@@ -264230,24 +259892,21 @@ function getMarkerLines(loc, source, opts) {
   };
 }
 function codeFrameColumns(rawLines, loc, opts = {}) {
-  const highlighted = (opts.highlightCode || opts.forceColor) && (0, _highlight.shouldHighlight)(opts);
-  const colors = getColors(opts.forceColor);
-  const defs = getDefs(colors);
-  const maybeHighlight = (fmt, string) => {
-    return highlighted ? fmt(string) : string;
-  };
+  const shouldHighlight = opts.forceColor || isColorSupported() && opts.highlightCode;
+  const startLineBaseZero = (opts.startLine || 1) - 1;
+  const defs = getDefs(shouldHighlight);
   const lines = rawLines.split(NEWLINE);
   const {
     start,
     end,
     markerLines
-  } = getMarkerLines(loc, lines, opts);
+  } = getMarkerLines(loc, lines, opts, startLineBaseZero);
   const hasColumns = loc.start && typeof loc.start.column === "number";
-  const numberMaxWidth = String(end).length;
-  const highlightedLines = highlighted ? (0, _highlight.default)(rawLines, opts) : rawLines;
+  const numberMaxWidth = String(end + startLineBaseZero).length;
+  const highlightedLines = shouldHighlight ? highlight(rawLines) : rawLines;
   let frame = highlightedLines.split(NEWLINE, end).slice(start, end).map((line, index) => {
     const number = start + 1 + index;
-    const paddedNumber = ` ${number}`.slice(-numberMaxWidth);
+    const paddedNumber = ` ${number + startLineBaseZero}`.slice(-numberMaxWidth);
     const gutter = ` ${paddedNumber} |`;
     const hasMarker = markerLines[number];
     const lastMarkerLine = !markerLines[number + 1];
@@ -264256,26 +259915,26 @@ function codeFrameColumns(rawLines, loc, opts = {}) {
       if (Array.isArray(hasMarker)) {
         const markerSpacing = line.slice(0, Math.max(hasMarker[0] - 1, 0)).replace(/[^\t]/g, " ");
         const numberOfMarkers = hasMarker[1] || 1;
-        markerLine = ["\n ", maybeHighlight(defs.gutter, gutter.replace(/\d/g, " ")), " ", markerSpacing, maybeHighlight(defs.marker, "^").repeat(numberOfMarkers)].join("");
+        markerLine = ["\n ", defs.gutter(gutter.replace(/\d/g, " ")), " ", markerSpacing, defs.marker("^").repeat(numberOfMarkers)].join("");
         if (lastMarkerLine && opts.message) {
-          markerLine += " " + maybeHighlight(defs.message, opts.message);
+          markerLine += " " + defs.message(opts.message);
         }
       }
-      return [maybeHighlight(defs.marker, ">"), maybeHighlight(defs.gutter, gutter), line.length > 0 ? ` ${line}` : "", markerLine].join("");
+      return [defs.marker(">"), defs.gutter(gutter), line.length > 0 ? ` ${line}` : "", markerLine].join("");
     } else {
-      return ` ${maybeHighlight(defs.gutter, gutter)}${line.length > 0 ? ` ${line}` : ""}`;
+      return ` ${defs.gutter(gutter)}${line.length > 0 ? ` ${line}` : ""}`;
     }
   }).join("\n");
   if (opts.message && !hasColumns) {
     frame = `${" ".repeat(numberMaxWidth + 1)}${opts.message}\n${frame}`;
   }
-  if (highlighted) {
-    return colors.reset(frame);
+  if (shouldHighlight) {
+    return defs.reset(frame);
   } else {
     return frame;
   }
 }
-function _default(rawLines, lineNumber, colNumber, opts = {}) {
+function index (rawLines, lineNumber, colNumber, opts = {}) {
   if (!deprecationWarningShown) {
     deprecationWarningShown = true;
     const message = "Passing lineNumber and colNumber is deprecated to @babel/code-frame. Please use `codeFrameColumns`.";
@@ -264297,6 +259956,9 @@ function _default(rawLines, lineNumber, colNumber, opts = {}) {
   return codeFrameColumns(rawLines, location, opts);
 }
 
+exports.codeFrameColumns = codeFrameColumns;
+exports["default"] = index;
+exports.highlight = highlight;
 //# sourceMappingURL=index.js.map
 
 
@@ -264314,13 +259976,13 @@ Object.defineProperty(exports, "__esModule", ({
 exports.isIdentifierChar = isIdentifierChar;
 exports.isIdentifierName = isIdentifierName;
 exports.isIdentifierStart = isIdentifierStart;
-let nonASCIIidentifierStartChars = "\xaa\xb5\xba\xc0-\xd6\xd8-\xf6\xf8-\u02c1\u02c6-\u02d1\u02e0-\u02e4\u02ec\u02ee\u0370-\u0374\u0376\u0377\u037a-\u037d\u037f\u0386\u0388-\u038a\u038c\u038e-\u03a1\u03a3-\u03f5\u03f7-\u0481\u048a-\u052f\u0531-\u0556\u0559\u0560-\u0588\u05d0-\u05ea\u05ef-\u05f2\u0620-\u064a\u066e\u066f\u0671-\u06d3\u06d5\u06e5\u06e6\u06ee\u06ef\u06fa-\u06fc\u06ff\u0710\u0712-\u072f\u074d-\u07a5\u07b1\u07ca-\u07ea\u07f4\u07f5\u07fa\u0800-\u0815\u081a\u0824\u0828\u0840-\u0858\u0860-\u086a\u0870-\u0887\u0889-\u088e\u08a0-\u08c9\u0904-\u0939\u093d\u0950\u0958-\u0961\u0971-\u0980\u0985-\u098c\u098f\u0990\u0993-\u09a8\u09aa-\u09b0\u09b2\u09b6-\u09b9\u09bd\u09ce\u09dc\u09dd\u09df-\u09e1\u09f0\u09f1\u09fc\u0a05-\u0a0a\u0a0f\u0a10\u0a13-\u0a28\u0a2a-\u0a30\u0a32\u0a33\u0a35\u0a36\u0a38\u0a39\u0a59-\u0a5c\u0a5e\u0a72-\u0a74\u0a85-\u0a8d\u0a8f-\u0a91\u0a93-\u0aa8\u0aaa-\u0ab0\u0ab2\u0ab3\u0ab5-\u0ab9\u0abd\u0ad0\u0ae0\u0ae1\u0af9\u0b05-\u0b0c\u0b0f\u0b10\u0b13-\u0b28\u0b2a-\u0b30\u0b32\u0b33\u0b35-\u0b39\u0b3d\u0b5c\u0b5d\u0b5f-\u0b61\u0b71\u0b83\u0b85-\u0b8a\u0b8e-\u0b90\u0b92-\u0b95\u0b99\u0b9a\u0b9c\u0b9e\u0b9f\u0ba3\u0ba4\u0ba8-\u0baa\u0bae-\u0bb9\u0bd0\u0c05-\u0c0c\u0c0e-\u0c10\u0c12-\u0c28\u0c2a-\u0c39\u0c3d\u0c58-\u0c5a\u0c5d\u0c60\u0c61\u0c80\u0c85-\u0c8c\u0c8e-\u0c90\u0c92-\u0ca8\u0caa-\u0cb3\u0cb5-\u0cb9\u0cbd\u0cdd\u0cde\u0ce0\u0ce1\u0cf1\u0cf2\u0d04-\u0d0c\u0d0e-\u0d10\u0d12-\u0d3a\u0d3d\u0d4e\u0d54-\u0d56\u0d5f-\u0d61\u0d7a-\u0d7f\u0d85-\u0d96\u0d9a-\u0db1\u0db3-\u0dbb\u0dbd\u0dc0-\u0dc6\u0e01-\u0e30\u0e32\u0e33\u0e40-\u0e46\u0e81\u0e82\u0e84\u0e86-\u0e8a\u0e8c-\u0ea3\u0ea5\u0ea7-\u0eb0\u0eb2\u0eb3\u0ebd\u0ec0-\u0ec4\u0ec6\u0edc-\u0edf\u0f00\u0f40-\u0f47\u0f49-\u0f6c\u0f88-\u0f8c\u1000-\u102a\u103f\u1050-\u1055\u105a-\u105d\u1061\u1065\u1066\u106e-\u1070\u1075-\u1081\u108e\u10a0-\u10c5\u10c7\u10cd\u10d0-\u10fa\u10fc-\u1248\u124a-\u124d\u1250-\u1256\u1258\u125a-\u125d\u1260-\u1288\u128a-\u128d\u1290-\u12b0\u12b2-\u12b5\u12b8-\u12be\u12c0\u12c2-\u12c5\u12c8-\u12d6\u12d8-\u1310\u1312-\u1315\u1318-\u135a\u1380-\u138f\u13a0-\u13f5\u13f8-\u13fd\u1401-\u166c\u166f-\u167f\u1681-\u169a\u16a0-\u16ea\u16ee-\u16f8\u1700-\u1711\u171f-\u1731\u1740-\u1751\u1760-\u176c\u176e-\u1770\u1780-\u17b3\u17d7\u17dc\u1820-\u1878\u1880-\u18a8\u18aa\u18b0-\u18f5\u1900-\u191e\u1950-\u196d\u1970-\u1974\u1980-\u19ab\u19b0-\u19c9\u1a00-\u1a16\u1a20-\u1a54\u1aa7\u1b05-\u1b33\u1b45-\u1b4c\u1b83-\u1ba0\u1bae\u1baf\u1bba-\u1be5\u1c00-\u1c23\u1c4d-\u1c4f\u1c5a-\u1c7d\u1c80-\u1c88\u1c90-\u1cba\u1cbd-\u1cbf\u1ce9-\u1cec\u1cee-\u1cf3\u1cf5\u1cf6\u1cfa\u1d00-\u1dbf\u1e00-\u1f15\u1f18-\u1f1d\u1f20-\u1f45\u1f48-\u1f4d\u1f50-\u1f57\u1f59\u1f5b\u1f5d\u1f5f-\u1f7d\u1f80-\u1fb4\u1fb6-\u1fbc\u1fbe\u1fc2-\u1fc4\u1fc6-\u1fcc\u1fd0-\u1fd3\u1fd6-\u1fdb\u1fe0-\u1fec\u1ff2-\u1ff4\u1ff6-\u1ffc\u2071\u207f\u2090-\u209c\u2102\u2107\u210a-\u2113\u2115\u2118-\u211d\u2124\u2126\u2128\u212a-\u2139\u213c-\u213f\u2145-\u2149\u214e\u2160-\u2188\u2c00-\u2ce4\u2ceb-\u2cee\u2cf2\u2cf3\u2d00-\u2d25\u2d27\u2d2d\u2d30-\u2d67\u2d6f\u2d80-\u2d96\u2da0-\u2da6\u2da8-\u2dae\u2db0-\u2db6\u2db8-\u2dbe\u2dc0-\u2dc6\u2dc8-\u2dce\u2dd0-\u2dd6\u2dd8-\u2dde\u3005-\u3007\u3021-\u3029\u3031-\u3035\u3038-\u303c\u3041-\u3096\u309b-\u309f\u30a1-\u30fa\u30fc-\u30ff\u3105-\u312f\u3131-\u318e\u31a0-\u31bf\u31f0-\u31ff\u3400-\u4dbf\u4e00-\ua48c\ua4d0-\ua4fd\ua500-\ua60c\ua610-\ua61f\ua62a\ua62b\ua640-\ua66e\ua67f-\ua69d\ua6a0-\ua6ef\ua717-\ua71f\ua722-\ua788\ua78b-\ua7ca\ua7d0\ua7d1\ua7d3\ua7d5-\ua7d9\ua7f2-\ua801\ua803-\ua805\ua807-\ua80a\ua80c-\ua822\ua840-\ua873\ua882-\ua8b3\ua8f2-\ua8f7\ua8fb\ua8fd\ua8fe\ua90a-\ua925\ua930-\ua946\ua960-\ua97c\ua984-\ua9b2\ua9cf\ua9e0-\ua9e4\ua9e6-\ua9ef\ua9fa-\ua9fe\uaa00-\uaa28\uaa40-\uaa42\uaa44-\uaa4b\uaa60-\uaa76\uaa7a\uaa7e-\uaaaf\uaab1\uaab5\uaab6\uaab9-\uaabd\uaac0\uaac2\uaadb-\uaadd\uaae0-\uaaea\uaaf2-\uaaf4\uab01-\uab06\uab09-\uab0e\uab11-\uab16\uab20-\uab26\uab28-\uab2e\uab30-\uab5a\uab5c-\uab69\uab70-\uabe2\uac00-\ud7a3\ud7b0-\ud7c6\ud7cb-\ud7fb\uf900-\ufa6d\ufa70-\ufad9\ufb00-\ufb06\ufb13-\ufb17\ufb1d\ufb1f-\ufb28\ufb2a-\ufb36\ufb38-\ufb3c\ufb3e\ufb40\ufb41\ufb43\ufb44\ufb46-\ufbb1\ufbd3-\ufd3d\ufd50-\ufd8f\ufd92-\ufdc7\ufdf0-\ufdfb\ufe70-\ufe74\ufe76-\ufefc\uff21-\uff3a\uff41-\uff5a\uff66-\uffbe\uffc2-\uffc7\uffca-\uffcf\uffd2-\uffd7\uffda-\uffdc";
-let nonASCIIidentifierChars = "\u200c\u200d\xb7\u0300-\u036f\u0387\u0483-\u0487\u0591-\u05bd\u05bf\u05c1\u05c2\u05c4\u05c5\u05c7\u0610-\u061a\u064b-\u0669\u0670\u06d6-\u06dc\u06df-\u06e4\u06e7\u06e8\u06ea-\u06ed\u06f0-\u06f9\u0711\u0730-\u074a\u07a6-\u07b0\u07c0-\u07c9\u07eb-\u07f3\u07fd\u0816-\u0819\u081b-\u0823\u0825-\u0827\u0829-\u082d\u0859-\u085b\u0898-\u089f\u08ca-\u08e1\u08e3-\u0903\u093a-\u093c\u093e-\u094f\u0951-\u0957\u0962\u0963\u0966-\u096f\u0981-\u0983\u09bc\u09be-\u09c4\u09c7\u09c8\u09cb-\u09cd\u09d7\u09e2\u09e3\u09e6-\u09ef\u09fe\u0a01-\u0a03\u0a3c\u0a3e-\u0a42\u0a47\u0a48\u0a4b-\u0a4d\u0a51\u0a66-\u0a71\u0a75\u0a81-\u0a83\u0abc\u0abe-\u0ac5\u0ac7-\u0ac9\u0acb-\u0acd\u0ae2\u0ae3\u0ae6-\u0aef\u0afa-\u0aff\u0b01-\u0b03\u0b3c\u0b3e-\u0b44\u0b47\u0b48\u0b4b-\u0b4d\u0b55-\u0b57\u0b62\u0b63\u0b66-\u0b6f\u0b82\u0bbe-\u0bc2\u0bc6-\u0bc8\u0bca-\u0bcd\u0bd7\u0be6-\u0bef\u0c00-\u0c04\u0c3c\u0c3e-\u0c44\u0c46-\u0c48\u0c4a-\u0c4d\u0c55\u0c56\u0c62\u0c63\u0c66-\u0c6f\u0c81-\u0c83\u0cbc\u0cbe-\u0cc4\u0cc6-\u0cc8\u0cca-\u0ccd\u0cd5\u0cd6\u0ce2\u0ce3\u0ce6-\u0cef\u0cf3\u0d00-\u0d03\u0d3b\u0d3c\u0d3e-\u0d44\u0d46-\u0d48\u0d4a-\u0d4d\u0d57\u0d62\u0d63\u0d66-\u0d6f\u0d81-\u0d83\u0dca\u0dcf-\u0dd4\u0dd6\u0dd8-\u0ddf\u0de6-\u0def\u0df2\u0df3\u0e31\u0e34-\u0e3a\u0e47-\u0e4e\u0e50-\u0e59\u0eb1\u0eb4-\u0ebc\u0ec8-\u0ece\u0ed0-\u0ed9\u0f18\u0f19\u0f20-\u0f29\u0f35\u0f37\u0f39\u0f3e\u0f3f\u0f71-\u0f84\u0f86\u0f87\u0f8d-\u0f97\u0f99-\u0fbc\u0fc6\u102b-\u103e\u1040-\u1049\u1056-\u1059\u105e-\u1060\u1062-\u1064\u1067-\u106d\u1071-\u1074\u1082-\u108d\u108f-\u109d\u135d-\u135f\u1369-\u1371\u1712-\u1715\u1732-\u1734\u1752\u1753\u1772\u1773\u17b4-\u17d3\u17dd\u17e0-\u17e9\u180b-\u180d\u180f-\u1819\u18a9\u1920-\u192b\u1930-\u193b\u1946-\u194f\u19d0-\u19da\u1a17-\u1a1b\u1a55-\u1a5e\u1a60-\u1a7c\u1a7f-\u1a89\u1a90-\u1a99\u1ab0-\u1abd\u1abf-\u1ace\u1b00-\u1b04\u1b34-\u1b44\u1b50-\u1b59\u1b6b-\u1b73\u1b80-\u1b82\u1ba1-\u1bad\u1bb0-\u1bb9\u1be6-\u1bf3\u1c24-\u1c37\u1c40-\u1c49\u1c50-\u1c59\u1cd0-\u1cd2\u1cd4-\u1ce8\u1ced\u1cf4\u1cf7-\u1cf9\u1dc0-\u1dff\u200c\u200d\u203f\u2040\u2054\u20d0-\u20dc\u20e1\u20e5-\u20f0\u2cef-\u2cf1\u2d7f\u2de0-\u2dff\u302a-\u302f\u3099\u309a\u30fb\ua620-\ua629\ua66f\ua674-\ua67d\ua69e\ua69f\ua6f0\ua6f1\ua802\ua806\ua80b\ua823-\ua827\ua82c\ua880\ua881\ua8b4-\ua8c5\ua8d0-\ua8d9\ua8e0-\ua8f1\ua8ff-\ua909\ua926-\ua92d\ua947-\ua953\ua980-\ua983\ua9b3-\ua9c0\ua9d0-\ua9d9\ua9e5\ua9f0-\ua9f9\uaa29-\uaa36\uaa43\uaa4c\uaa4d\uaa50-\uaa59\uaa7b-\uaa7d\uaab0\uaab2-\uaab4\uaab7\uaab8\uaabe\uaabf\uaac1\uaaeb-\uaaef\uaaf5\uaaf6\uabe3-\uabea\uabec\uabed\uabf0-\uabf9\ufb1e\ufe00-\ufe0f\ufe20-\ufe2f\ufe33\ufe34\ufe4d-\ufe4f\uff10-\uff19\uff3f\uff65";
+let nonASCIIidentifierStartChars = "\xaa\xb5\xba\xc0-\xd6\xd8-\xf6\xf8-\u02c1\u02c6-\u02d1\u02e0-\u02e4\u02ec\u02ee\u0370-\u0374\u0376\u0377\u037a-\u037d\u037f\u0386\u0388-\u038a\u038c\u038e-\u03a1\u03a3-\u03f5\u03f7-\u0481\u048a-\u052f\u0531-\u0556\u0559\u0560-\u0588\u05d0-\u05ea\u05ef-\u05f2\u0620-\u064a\u066e\u066f\u0671-\u06d3\u06d5\u06e5\u06e6\u06ee\u06ef\u06fa-\u06fc\u06ff\u0710\u0712-\u072f\u074d-\u07a5\u07b1\u07ca-\u07ea\u07f4\u07f5\u07fa\u0800-\u0815\u081a\u0824\u0828\u0840-\u0858\u0860-\u086a\u0870-\u0887\u0889-\u088f\u08a0-\u08c9\u0904-\u0939\u093d\u0950\u0958-\u0961\u0971-\u0980\u0985-\u098c\u098f\u0990\u0993-\u09a8\u09aa-\u09b0\u09b2\u09b6-\u09b9\u09bd\u09ce\u09dc\u09dd\u09df-\u09e1\u09f0\u09f1\u09fc\u0a05-\u0a0a\u0a0f\u0a10\u0a13-\u0a28\u0a2a-\u0a30\u0a32\u0a33\u0a35\u0a36\u0a38\u0a39\u0a59-\u0a5c\u0a5e\u0a72-\u0a74\u0a85-\u0a8d\u0a8f-\u0a91\u0a93-\u0aa8\u0aaa-\u0ab0\u0ab2\u0ab3\u0ab5-\u0ab9\u0abd\u0ad0\u0ae0\u0ae1\u0af9\u0b05-\u0b0c\u0b0f\u0b10\u0b13-\u0b28\u0b2a-\u0b30\u0b32\u0b33\u0b35-\u0b39\u0b3d\u0b5c\u0b5d\u0b5f-\u0b61\u0b71\u0b83\u0b85-\u0b8a\u0b8e-\u0b90\u0b92-\u0b95\u0b99\u0b9a\u0b9c\u0b9e\u0b9f\u0ba3\u0ba4\u0ba8-\u0baa\u0bae-\u0bb9\u0bd0\u0c05-\u0c0c\u0c0e-\u0c10\u0c12-\u0c28\u0c2a-\u0c39\u0c3d\u0c58-\u0c5a\u0c5c\u0c5d\u0c60\u0c61\u0c80\u0c85-\u0c8c\u0c8e-\u0c90\u0c92-\u0ca8\u0caa-\u0cb3\u0cb5-\u0cb9\u0cbd\u0cdc-\u0cde\u0ce0\u0ce1\u0cf1\u0cf2\u0d04-\u0d0c\u0d0e-\u0d10\u0d12-\u0d3a\u0d3d\u0d4e\u0d54-\u0d56\u0d5f-\u0d61\u0d7a-\u0d7f\u0d85-\u0d96\u0d9a-\u0db1\u0db3-\u0dbb\u0dbd\u0dc0-\u0dc6\u0e01-\u0e30\u0e32\u0e33\u0e40-\u0e46\u0e81\u0e82\u0e84\u0e86-\u0e8a\u0e8c-\u0ea3\u0ea5\u0ea7-\u0eb0\u0eb2\u0eb3\u0ebd\u0ec0-\u0ec4\u0ec6\u0edc-\u0edf\u0f00\u0f40-\u0f47\u0f49-\u0f6c\u0f88-\u0f8c\u1000-\u102a\u103f\u1050-\u1055\u105a-\u105d\u1061\u1065\u1066\u106e-\u1070\u1075-\u1081\u108e\u10a0-\u10c5\u10c7\u10cd\u10d0-\u10fa\u10fc-\u1248\u124a-\u124d\u1250-\u1256\u1258\u125a-\u125d\u1260-\u1288\u128a-\u128d\u1290-\u12b0\u12b2-\u12b5\u12b8-\u12be\u12c0\u12c2-\u12c5\u12c8-\u12d6\u12d8-\u1310\u1312-\u1315\u1318-\u135a\u1380-\u138f\u13a0-\u13f5\u13f8-\u13fd\u1401-\u166c\u166f-\u167f\u1681-\u169a\u16a0-\u16ea\u16ee-\u16f8\u1700-\u1711\u171f-\u1731\u1740-\u1751\u1760-\u176c\u176e-\u1770\u1780-\u17b3\u17d7\u17dc\u1820-\u1878\u1880-\u18a8\u18aa\u18b0-\u18f5\u1900-\u191e\u1950-\u196d\u1970-\u1974\u1980-\u19ab\u19b0-\u19c9\u1a00-\u1a16\u1a20-\u1a54\u1aa7\u1b05-\u1b33\u1b45-\u1b4c\u1b83-\u1ba0\u1bae\u1baf\u1bba-\u1be5\u1c00-\u1c23\u1c4d-\u1c4f\u1c5a-\u1c7d\u1c80-\u1c8a\u1c90-\u1cba\u1cbd-\u1cbf\u1ce9-\u1cec\u1cee-\u1cf3\u1cf5\u1cf6\u1cfa\u1d00-\u1dbf\u1e00-\u1f15\u1f18-\u1f1d\u1f20-\u1f45\u1f48-\u1f4d\u1f50-\u1f57\u1f59\u1f5b\u1f5d\u1f5f-\u1f7d\u1f80-\u1fb4\u1fb6-\u1fbc\u1fbe\u1fc2-\u1fc4\u1fc6-\u1fcc\u1fd0-\u1fd3\u1fd6-\u1fdb\u1fe0-\u1fec\u1ff2-\u1ff4\u1ff6-\u1ffc\u2071\u207f\u2090-\u209c\u2102\u2107\u210a-\u2113\u2115\u2118-\u211d\u2124\u2126\u2128\u212a-\u2139\u213c-\u213f\u2145-\u2149\u214e\u2160-\u2188\u2c00-\u2ce4\u2ceb-\u2cee\u2cf2\u2cf3\u2d00-\u2d25\u2d27\u2d2d\u2d30-\u2d67\u2d6f\u2d80-\u2d96\u2da0-\u2da6\u2da8-\u2dae\u2db0-\u2db6\u2db8-\u2dbe\u2dc0-\u2dc6\u2dc8-\u2dce\u2dd0-\u2dd6\u2dd8-\u2dde\u3005-\u3007\u3021-\u3029\u3031-\u3035\u3038-\u303c\u3041-\u3096\u309b-\u309f\u30a1-\u30fa\u30fc-\u30ff\u3105-\u312f\u3131-\u318e\u31a0-\u31bf\u31f0-\u31ff\u3400-\u4dbf\u4e00-\ua48c\ua4d0-\ua4fd\ua500-\ua60c\ua610-\ua61f\ua62a\ua62b\ua640-\ua66e\ua67f-\ua69d\ua6a0-\ua6ef\ua717-\ua71f\ua722-\ua788\ua78b-\ua7dc\ua7f1-\ua801\ua803-\ua805\ua807-\ua80a\ua80c-\ua822\ua840-\ua873\ua882-\ua8b3\ua8f2-\ua8f7\ua8fb\ua8fd\ua8fe\ua90a-\ua925\ua930-\ua946\ua960-\ua97c\ua984-\ua9b2\ua9cf\ua9e0-\ua9e4\ua9e6-\ua9ef\ua9fa-\ua9fe\uaa00-\uaa28\uaa40-\uaa42\uaa44-\uaa4b\uaa60-\uaa76\uaa7a\uaa7e-\uaaaf\uaab1\uaab5\uaab6\uaab9-\uaabd\uaac0\uaac2\uaadb-\uaadd\uaae0-\uaaea\uaaf2-\uaaf4\uab01-\uab06\uab09-\uab0e\uab11-\uab16\uab20-\uab26\uab28-\uab2e\uab30-\uab5a\uab5c-\uab69\uab70-\uabe2\uac00-\ud7a3\ud7b0-\ud7c6\ud7cb-\ud7fb\uf900-\ufa6d\ufa70-\ufad9\ufb00-\ufb06\ufb13-\ufb17\ufb1d\ufb1f-\ufb28\ufb2a-\ufb36\ufb38-\ufb3c\ufb3e\ufb40\ufb41\ufb43\ufb44\ufb46-\ufbb1\ufbd3-\ufd3d\ufd50-\ufd8f\ufd92-\ufdc7\ufdf0-\ufdfb\ufe70-\ufe74\ufe76-\ufefc\uff21-\uff3a\uff41-\uff5a\uff66-\uffbe\uffc2-\uffc7\uffca-\uffcf\uffd2-\uffd7\uffda-\uffdc";
+let nonASCIIidentifierChars = "\xb7\u0300-\u036f\u0387\u0483-\u0487\u0591-\u05bd\u05bf\u05c1\u05c2\u05c4\u05c5\u05c7\u0610-\u061a\u064b-\u0669\u0670\u06d6-\u06dc\u06df-\u06e4\u06e7\u06e8\u06ea-\u06ed\u06f0-\u06f9\u0711\u0730-\u074a\u07a6-\u07b0\u07c0-\u07c9\u07eb-\u07f3\u07fd\u0816-\u0819\u081b-\u0823\u0825-\u0827\u0829-\u082d\u0859-\u085b\u0897-\u089f\u08ca-\u08e1\u08e3-\u0903\u093a-\u093c\u093e-\u094f\u0951-\u0957\u0962\u0963\u0966-\u096f\u0981-\u0983\u09bc\u09be-\u09c4\u09c7\u09c8\u09cb-\u09cd\u09d7\u09e2\u09e3\u09e6-\u09ef\u09fe\u0a01-\u0a03\u0a3c\u0a3e-\u0a42\u0a47\u0a48\u0a4b-\u0a4d\u0a51\u0a66-\u0a71\u0a75\u0a81-\u0a83\u0abc\u0abe-\u0ac5\u0ac7-\u0ac9\u0acb-\u0acd\u0ae2\u0ae3\u0ae6-\u0aef\u0afa-\u0aff\u0b01-\u0b03\u0b3c\u0b3e-\u0b44\u0b47\u0b48\u0b4b-\u0b4d\u0b55-\u0b57\u0b62\u0b63\u0b66-\u0b6f\u0b82\u0bbe-\u0bc2\u0bc6-\u0bc8\u0bca-\u0bcd\u0bd7\u0be6-\u0bef\u0c00-\u0c04\u0c3c\u0c3e-\u0c44\u0c46-\u0c48\u0c4a-\u0c4d\u0c55\u0c56\u0c62\u0c63\u0c66-\u0c6f\u0c81-\u0c83\u0cbc\u0cbe-\u0cc4\u0cc6-\u0cc8\u0cca-\u0ccd\u0cd5\u0cd6\u0ce2\u0ce3\u0ce6-\u0cef\u0cf3\u0d00-\u0d03\u0d3b\u0d3c\u0d3e-\u0d44\u0d46-\u0d48\u0d4a-\u0d4d\u0d57\u0d62\u0d63\u0d66-\u0d6f\u0d81-\u0d83\u0dca\u0dcf-\u0dd4\u0dd6\u0dd8-\u0ddf\u0de6-\u0def\u0df2\u0df3\u0e31\u0e34-\u0e3a\u0e47-\u0e4e\u0e50-\u0e59\u0eb1\u0eb4-\u0ebc\u0ec8-\u0ece\u0ed0-\u0ed9\u0f18\u0f19\u0f20-\u0f29\u0f35\u0f37\u0f39\u0f3e\u0f3f\u0f71-\u0f84\u0f86\u0f87\u0f8d-\u0f97\u0f99-\u0fbc\u0fc6\u102b-\u103e\u1040-\u1049\u1056-\u1059\u105e-\u1060\u1062-\u1064\u1067-\u106d\u1071-\u1074\u1082-\u108d\u108f-\u109d\u135d-\u135f\u1369-\u1371\u1712-\u1715\u1732-\u1734\u1752\u1753\u1772\u1773\u17b4-\u17d3\u17dd\u17e0-\u17e9\u180b-\u180d\u180f-\u1819\u18a9\u1920-\u192b\u1930-\u193b\u1946-\u194f\u19d0-\u19da\u1a17-\u1a1b\u1a55-\u1a5e\u1a60-\u1a7c\u1a7f-\u1a89\u1a90-\u1a99\u1ab0-\u1abd\u1abf-\u1add\u1ae0-\u1aeb\u1b00-\u1b04\u1b34-\u1b44\u1b50-\u1b59\u1b6b-\u1b73\u1b80-\u1b82\u1ba1-\u1bad\u1bb0-\u1bb9\u1be6-\u1bf3\u1c24-\u1c37\u1c40-\u1c49\u1c50-\u1c59\u1cd0-\u1cd2\u1cd4-\u1ce8\u1ced\u1cf4\u1cf7-\u1cf9\u1dc0-\u1dff\u200c\u200d\u203f\u2040\u2054\u20d0-\u20dc\u20e1\u20e5-\u20f0\u2cef-\u2cf1\u2d7f\u2de0-\u2dff\u302a-\u302f\u3099\u309a\u30fb\ua620-\ua629\ua66f\ua674-\ua67d\ua69e\ua69f\ua6f0\ua6f1\ua802\ua806\ua80b\ua823-\ua827\ua82c\ua880\ua881\ua8b4-\ua8c5\ua8d0-\ua8d9\ua8e0-\ua8f1\ua8ff-\ua909\ua926-\ua92d\ua947-\ua953\ua980-\ua983\ua9b3-\ua9c0\ua9d0-\ua9d9\ua9e5\ua9f0-\ua9f9\uaa29-\uaa36\uaa43\uaa4c\uaa4d\uaa50-\uaa59\uaa7b-\uaa7d\uaab0\uaab2-\uaab4\uaab7\uaab8\uaabe\uaabf\uaac1\uaaeb-\uaaef\uaaf5\uaaf6\uabe3-\uabea\uabec\uabed\uabf0-\uabf9\ufb1e\ufe00-\ufe0f\ufe20-\ufe2f\ufe33\ufe34\ufe4d-\ufe4f\uff10-\uff19\uff3f\uff65";
 const nonASCIIidentifierStart = new RegExp("[" + nonASCIIidentifierStartChars + "]");
 const nonASCIIidentifier = new RegExp("[" + nonASCIIidentifierStartChars + nonASCIIidentifierChars + "]");
 nonASCIIidentifierStartChars = nonASCIIidentifierChars = null;
-const astralIdentifierStartCodes = [0, 11, 2, 25, 2, 18, 2, 1, 2, 14, 3, 13, 35, 122, 70, 52, 268, 28, 4, 48, 48, 31, 14, 29, 6, 37, 11, 29, 3, 35, 5, 7, 2, 4, 43, 157, 19, 35, 5, 35, 5, 39, 9, 51, 13, 10, 2, 14, 2, 6, 2, 1, 2, 10, 2, 14, 2, 6, 2, 1, 68, 310, 10, 21, 11, 7, 25, 5, 2, 41, 2, 8, 70, 5, 3, 0, 2, 43, 2, 1, 4, 0, 3, 22, 11, 22, 10, 30, 66, 18, 2, 1, 11, 21, 11, 25, 71, 55, 7, 1, 65, 0, 16, 3, 2, 2, 2, 28, 43, 28, 4, 28, 36, 7, 2, 27, 28, 53, 11, 21, 11, 18, 14, 17, 111, 72, 56, 50, 14, 50, 14, 35, 349, 41, 7, 1, 79, 28, 11, 0, 9, 21, 43, 17, 47, 20, 28, 22, 13, 52, 58, 1, 3, 0, 14, 44, 33, 24, 27, 35, 30, 0, 3, 0, 9, 34, 4, 0, 13, 47, 15, 3, 22, 0, 2, 0, 36, 17, 2, 24, 20, 1, 64, 6, 2, 0, 2, 3, 2, 14, 2, 9, 8, 46, 39, 7, 3, 1, 3, 21, 2, 6, 2, 1, 2, 4, 4, 0, 19, 0, 13, 4, 159, 52, 19, 3, 21, 2, 31, 47, 21, 1, 2, 0, 185, 46, 42, 3, 37, 47, 21, 0, 60, 42, 14, 0, 72, 26, 38, 6, 186, 43, 117, 63, 32, 7, 3, 0, 3, 7, 2, 1, 2, 23, 16, 0, 2, 0, 95, 7, 3, 38, 17, 0, 2, 0, 29, 0, 11, 39, 8, 0, 22, 0, 12, 45, 20, 0, 19, 72, 264, 8, 2, 36, 18, 0, 50, 29, 113, 6, 2, 1, 2, 37, 22, 0, 26, 5, 2, 1, 2, 31, 15, 0, 328, 18, 16, 0, 2, 12, 2, 33, 125, 0, 80, 921, 103, 110, 18, 195, 2637, 96, 16, 1071, 18, 5, 4026, 582, 8634, 568, 8, 30, 18, 78, 18, 29, 19, 47, 17, 3, 32, 20, 6, 18, 689, 63, 129, 74, 6, 0, 67, 12, 65, 1, 2, 0, 29, 6135, 9, 1237, 43, 8, 8936, 3, 2, 6, 2, 1, 2, 290, 16, 0, 30, 2, 3, 0, 15, 3, 9, 395, 2309, 106, 6, 12, 4, 8, 8, 9, 5991, 84, 2, 70, 2, 1, 3, 0, 3, 1, 3, 3, 2, 11, 2, 0, 2, 6, 2, 64, 2, 3, 3, 7, 2, 6, 2, 27, 2, 3, 2, 4, 2, 0, 4, 6, 2, 339, 3, 24, 2, 24, 2, 30, 2, 24, 2, 30, 2, 24, 2, 30, 2, 24, 2, 30, 2, 24, 2, 7, 1845, 30, 7, 5, 262, 61, 147, 44, 11, 6, 17, 0, 322, 29, 19, 43, 485, 27, 757, 6, 2, 3, 2, 1, 2, 14, 2, 196, 60, 67, 8, 0, 1205, 3, 2, 26, 2, 1, 2, 0, 3, 0, 2, 9, 2, 3, 2, 0, 2, 0, 7, 0, 5, 0, 2, 0, 2, 0, 2, 2, 2, 1, 2, 0, 3, 0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 1, 2, 0, 3, 3, 2, 6, 2, 3, 2, 3, 2, 0, 2, 9, 2, 16, 6, 2, 2, 4, 2, 16, 4421, 42719, 33, 4153, 7, 221, 3, 5761, 15, 7472, 16, 621, 2467, 541, 1507, 4938, 6, 4191];
-const astralIdentifierCodes = [509, 0, 227, 0, 150, 4, 294, 9, 1368, 2, 2, 1, 6, 3, 41, 2, 5, 0, 166, 1, 574, 3, 9, 9, 370, 1, 81, 2, 71, 10, 50, 3, 123, 2, 54, 14, 32, 10, 3, 1, 11, 3, 46, 10, 8, 0, 46, 9, 7, 2, 37, 13, 2, 9, 6, 1, 45, 0, 13, 2, 49, 13, 9, 3, 2, 11, 83, 11, 7, 0, 3, 0, 158, 11, 6, 9, 7, 3, 56, 1, 2, 6, 3, 1, 3, 2, 10, 0, 11, 1, 3, 6, 4, 4, 193, 17, 10, 9, 5, 0, 82, 19, 13, 9, 214, 6, 3, 8, 28, 1, 83, 16, 16, 9, 82, 12, 9, 9, 84, 14, 5, 9, 243, 14, 166, 9, 71, 5, 2, 1, 3, 3, 2, 0, 2, 1, 13, 9, 120, 6, 3, 6, 4, 0, 29, 9, 41, 6, 2, 3, 9, 0, 10, 10, 47, 15, 406, 7, 2, 7, 17, 9, 57, 21, 2, 13, 123, 5, 4, 0, 2, 1, 2, 6, 2, 0, 9, 9, 49, 4, 2, 1, 2, 4, 9, 9, 330, 3, 10, 1, 2, 0, 49, 6, 4, 4, 14, 9, 5351, 0, 7, 14, 13835, 9, 87, 9, 39, 4, 60, 6, 26, 9, 1014, 0, 2, 54, 8, 3, 82, 0, 12, 1, 19628, 1, 4706, 45, 3, 22, 543, 4, 4, 5, 9, 7, 3, 6, 31, 3, 149, 2, 1418, 49, 513, 54, 5, 49, 9, 0, 15, 0, 23, 4, 2, 14, 1361, 6, 2, 16, 3, 6, 2, 1, 2, 4, 101, 0, 161, 6, 10, 9, 357, 0, 62, 13, 499, 13, 983, 6, 110, 6, 6, 9, 4759, 9, 787719, 239];
+const astralIdentifierStartCodes = [0, 11, 2, 25, 2, 18, 2, 1, 2, 14, 3, 13, 35, 122, 70, 52, 268, 28, 4, 48, 48, 31, 14, 29, 6, 37, 11, 29, 3, 35, 5, 7, 2, 4, 43, 157, 19, 35, 5, 35, 5, 39, 9, 51, 13, 10, 2, 14, 2, 6, 2, 1, 2, 10, 2, 14, 2, 6, 2, 1, 4, 51, 13, 310, 10, 21, 11, 7, 25, 5, 2, 41, 2, 8, 70, 5, 3, 0, 2, 43, 2, 1, 4, 0, 3, 22, 11, 22, 10, 30, 66, 18, 2, 1, 11, 21, 11, 25, 7, 25, 39, 55, 7, 1, 65, 0, 16, 3, 2, 2, 2, 28, 43, 28, 4, 28, 36, 7, 2, 27, 28, 53, 11, 21, 11, 18, 14, 17, 111, 72, 56, 50, 14, 50, 14, 35, 39, 27, 10, 22, 251, 41, 7, 1, 17, 5, 57, 28, 11, 0, 9, 21, 43, 17, 47, 20, 28, 22, 13, 52, 58, 1, 3, 0, 14, 44, 33, 24, 27, 35, 30, 0, 3, 0, 9, 34, 4, 0, 13, 47, 15, 3, 22, 0, 2, 0, 36, 17, 2, 24, 20, 1, 64, 6, 2, 0, 2, 3, 2, 14, 2, 9, 8, 46, 39, 7, 3, 1, 3, 21, 2, 6, 2, 1, 2, 4, 4, 0, 19, 0, 13, 4, 31, 9, 2, 0, 3, 0, 2, 37, 2, 0, 26, 0, 2, 0, 45, 52, 19, 3, 21, 2, 31, 47, 21, 1, 2, 0, 185, 46, 42, 3, 37, 47, 21, 0, 60, 42, 14, 0, 72, 26, 38, 6, 186, 43, 117, 63, 32, 7, 3, 0, 3, 7, 2, 1, 2, 23, 16, 0, 2, 0, 95, 7, 3, 38, 17, 0, 2, 0, 29, 0, 11, 39, 8, 0, 22, 0, 12, 45, 20, 0, 19, 72, 200, 32, 32, 8, 2, 36, 18, 0, 50, 29, 113, 6, 2, 1, 2, 37, 22, 0, 26, 5, 2, 1, 2, 31, 15, 0, 24, 43, 261, 18, 16, 0, 2, 12, 2, 33, 125, 0, 80, 921, 103, 110, 18, 195, 2637, 96, 16, 1071, 18, 5, 26, 3994, 6, 582, 6842, 29, 1763, 568, 8, 30, 18, 78, 18, 29, 19, 47, 17, 3, 32, 20, 6, 18, 433, 44, 212, 63, 33, 24, 3, 24, 45, 74, 6, 0, 67, 12, 65, 1, 2, 0, 15, 4, 10, 7381, 42, 31, 98, 114, 8702, 3, 2, 6, 2, 1, 2, 290, 16, 0, 30, 2, 3, 0, 15, 3, 9, 395, 2309, 106, 6, 12, 4, 8, 8, 9, 5991, 84, 2, 70, 2, 1, 3, 0, 3, 1, 3, 3, 2, 11, 2, 0, 2, 6, 2, 64, 2, 3, 3, 7, 2, 6, 2, 27, 2, 3, 2, 4, 2, 0, 4, 6, 2, 339, 3, 24, 2, 24, 2, 30, 2, 24, 2, 30, 2, 24, 2, 30, 2, 24, 2, 30, 2, 24, 2, 7, 1845, 30, 7, 5, 262, 61, 147, 44, 11, 6, 17, 0, 322, 29, 19, 43, 485, 27, 229, 29, 3, 0, 208, 30, 2, 2, 2, 1, 2, 6, 3, 4, 10, 1, 225, 6, 2, 3, 2, 1, 2, 14, 2, 196, 60, 67, 8, 0, 1205, 3, 2, 26, 2, 1, 2, 0, 3, 0, 2, 9, 2, 3, 2, 0, 2, 0, 7, 0, 5, 0, 2, 0, 2, 0, 2, 2, 2, 1, 2, 0, 3, 0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 1, 2, 0, 3, 3, 2, 6, 2, 3, 2, 3, 2, 0, 2, 9, 2, 16, 6, 2, 2, 4, 2, 16, 4421, 42719, 33, 4381, 3, 5773, 3, 7472, 16, 621, 2467, 541, 1507, 4938, 6, 8489];
+const astralIdentifierCodes = [509, 0, 227, 0, 150, 4, 294, 9, 1368, 2, 2, 1, 6, 3, 41, 2, 5, 0, 166, 1, 574, 3, 9, 9, 7, 9, 32, 4, 318, 1, 78, 5, 71, 10, 50, 3, 123, 2, 54, 14, 32, 10, 3, 1, 11, 3, 46, 10, 8, 0, 46, 9, 7, 2, 37, 13, 2, 9, 6, 1, 45, 0, 13, 2, 49, 13, 9, 3, 2, 11, 83, 11, 7, 0, 3, 0, 158, 11, 6, 9, 7, 3, 56, 1, 2, 6, 3, 1, 3, 2, 10, 0, 11, 1, 3, 6, 4, 4, 68, 8, 2, 0, 3, 0, 2, 3, 2, 4, 2, 0, 15, 1, 83, 17, 10, 9, 5, 0, 82, 19, 13, 9, 214, 6, 3, 8, 28, 1, 83, 16, 16, 9, 82, 12, 9, 9, 7, 19, 58, 14, 5, 9, 243, 14, 166, 9, 71, 5, 2, 1, 3, 3, 2, 0, 2, 1, 13, 9, 120, 6, 3, 6, 4, 0, 29, 9, 41, 6, 2, 3, 9, 0, 10, 10, 47, 15, 199, 7, 137, 9, 54, 7, 2, 7, 17, 9, 57, 21, 2, 13, 123, 5, 4, 0, 2, 1, 2, 6, 2, 0, 9, 9, 49, 4, 2, 1, 2, 4, 9, 9, 55, 9, 266, 3, 10, 1, 2, 0, 49, 6, 4, 4, 14, 10, 5350, 0, 7, 14, 11465, 27, 2343, 9, 87, 9, 39, 4, 60, 6, 26, 9, 535, 9, 470, 0, 2, 54, 8, 3, 82, 0, 12, 1, 19628, 1, 4178, 9, 519, 45, 3, 22, 543, 4, 4, 5, 9, 7, 3, 6, 31, 3, 149, 2, 1418, 49, 513, 54, 5, 49, 9, 0, 15, 0, 23, 4, 2, 14, 1361, 6, 2, 16, 3, 6, 2, 1, 2, 4, 101, 0, 161, 6, 10, 9, 357, 0, 62, 13, 499, 13, 245, 1, 2, 9, 233, 0, 3, 0, 8, 1, 6, 0, 475, 6, 110, 6, 6, 9, 4759, 9, 787719, 239];
 function isInAstralSet(code, set) {
   let pos = 0x10000;
   for (let i = 0, length = set.length; i < length; i += 2) {
@@ -264488,133 +260150,6 @@ function isKeyword(word) {
 
 /***/ }),
 
-/***/ 26270:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({
-  value: true
-}));
-exports["default"] = highlight;
-exports.shouldHighlight = shouldHighlight;
-var _jsTokens = __nccwpck_require__(85756);
-var _helperValidatorIdentifier = __nccwpck_require__(76599);
-var _picocolors = _interopRequireWildcard(__nccwpck_require__(57336), true);
-function _getRequireWildcardCache(e) { if ("function" != typeof WeakMap) return null; var r = new WeakMap(), t = new WeakMap(); return (_getRequireWildcardCache = function (e) { return e ? t : r; })(e); }
-function _interopRequireWildcard(e, r) { if (!r && e && e.__esModule) return e; if (null === e || "object" != typeof e && "function" != typeof e) return { default: e }; var t = _getRequireWildcardCache(r); if (t && t.has(e)) return t.get(e); var n = { __proto__: null }, a = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var u in e) if ("default" !== u && {}.hasOwnProperty.call(e, u)) { var i = a ? Object.getOwnPropertyDescriptor(e, u) : null; i && (i.get || i.set) ? Object.defineProperty(n, u, i) : n[u] = e[u]; } return n.default = e, t && t.set(e, n), n; }
-const colors = typeof process === "object" && (process.env.FORCE_COLOR === "0" || process.env.FORCE_COLOR === "false") ? (0, _picocolors.createColors)(false) : _picocolors.default;
-const compose = (f, g) => v => f(g(v));
-const sometimesKeywords = new Set(["as", "async", "from", "get", "of", "set"]);
-function getDefs(colors) {
-  return {
-    keyword: colors.cyan,
-    capitalized: colors.yellow,
-    jsxIdentifier: colors.yellow,
-    punctuator: colors.yellow,
-    number: colors.magenta,
-    string: colors.green,
-    regex: colors.magenta,
-    comment: colors.gray,
-    invalid: compose(compose(colors.white, colors.bgRed), colors.bold)
-  };
-}
-const NEWLINE = /\r\n|[\n\r\u2028\u2029]/;
-const BRACKET = /^[()[\]{}]$/;
-let tokenize;
-{
-  const JSX_TAG = /^[a-z][\w-]*$/i;
-  const getTokenType = function (token, offset, text) {
-    if (token.type === "name") {
-      if ((0, _helperValidatorIdentifier.isKeyword)(token.value) || (0, _helperValidatorIdentifier.isStrictReservedWord)(token.value, true) || sometimesKeywords.has(token.value)) {
-        return "keyword";
-      }
-      if (JSX_TAG.test(token.value) && (text[offset - 1] === "<" || text.slice(offset - 2, offset) === "</")) {
-        return "jsxIdentifier";
-      }
-      if (token.value[0] !== token.value[0].toLowerCase()) {
-        return "capitalized";
-      }
-    }
-    if (token.type === "punctuator" && BRACKET.test(token.value)) {
-      return "bracket";
-    }
-    if (token.type === "invalid" && (token.value === "@" || token.value === "#")) {
-      return "punctuator";
-    }
-    return token.type;
-  };
-  tokenize = function* (text) {
-    let match;
-    while (match = _jsTokens.default.exec(text)) {
-      const token = _jsTokens.matchToToken(match);
-      yield {
-        type: getTokenType(token, match.index, text),
-        value: token.value
-      };
-    }
-  };
-}
-function highlightTokens(defs, text) {
-  let highlighted = "";
-  for (const {
-    type,
-    value
-  } of tokenize(text)) {
-    const colorize = defs[type];
-    if (colorize) {
-      highlighted += value.split(NEWLINE).map(str => colorize(str)).join("\n");
-    } else {
-      highlighted += value;
-    }
-  }
-  return highlighted;
-}
-function shouldHighlight(options) {
-  return colors.isColorSupported || options.forceColor;
-}
-let pcWithForcedColor = undefined;
-function getColors(forceColor) {
-  if (forceColor) {
-    var _pcWithForcedColor;
-    (_pcWithForcedColor = pcWithForcedColor) != null ? _pcWithForcedColor : pcWithForcedColor = (0, _picocolors.createColors)(true);
-    return pcWithForcedColor;
-  }
-  return colors;
-}
-function highlight(code, options = {}) {
-  if (code !== "" && shouldHighlight(options)) {
-    const defs = getDefs(getColors(options.forceColor));
-    return highlightTokens(defs, code);
-  } else {
-    return code;
-  }
-}
-{
-  let chalk, chalkWithForcedColor;
-  exports.getChalk = ({
-    forceColor
-  }) => {
-    var _chalk;
-    (_chalk = chalk) != null ? _chalk : chalk = __nccwpck_require__(71318);
-    if (forceColor) {
-      var _chalkWithForcedColor;
-      (_chalkWithForcedColor = chalkWithForcedColor) != null ? _chalkWithForcedColor : chalkWithForcedColor = new chalk.constructor({
-        enabled: true,
-        level: 1
-      });
-      return chalkWithForcedColor;
-    }
-    return chalk;
-  };
-}
-
-//# sourceMappingURL=index.js.map
-
-
-/***/ }),
-
 /***/ 15206:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -264742,8 +260277,10 @@ class CLI {
     }
     #build(yargs) {
         const latestOrPinned = this.#pinnedBrowsers ? 'pinned' : 'latest';
+        // If there are pinned browsers allow the positional arg to be optional
+        const browserArgType = this.#pinnedBrowsers ? '[browser]' : '<browser>';
         return yargs
-            .command('install <browser>', 'Download and install the specified browser. If successful, the command outputs the actual browser buildId that was installed and the absolute path to the browser executable (format: <browser>@<buildID> <path>).', yargs => {
+            .command(`install ${browserArgType}`, 'Download and install the specified browser. If successful, the command outputs the actual browser buildId that was installed and the absolute path to the browser executable (format: <browser>@<buildID> <path>).', yargs => {
             this.#defineBrowserParameter(yargs);
             this.#definePlatformParameter(yargs);
             this.#definePathParameter(yargs);
@@ -264751,6 +260288,9 @@ class CLI {
                 type: 'string',
                 desc: 'Base URL to download from',
             });
+            if (this.#pinnedBrowsers) {
+                yargs.example('$0 install', 'Install all pinned browsers');
+            }
             yargs.example('$0 install chrome', `Install the ${latestOrPinned} available build of the Chrome browser.`);
             yargs.example('$0 install chrome@latest', 'Install the latest available build for the Chrome browser.');
             yargs.example('$0 install chrome@stable', 'Install the latest available build for the Chrome browser from the stable channel.');
@@ -264778,36 +260318,31 @@ class CLI {
             }
         }, async (argv) => {
             const args = argv;
-            args.platform ??= (0, detectPlatform_js_1.detectBrowserPlatform)();
-            if (!args.platform) {
-                throw new Error(`Could not resolve the current platform`);
-            }
-            if (args.browser.buildId === 'pinned') {
-                const pinnedVersion = this.#pinnedBrowsers?.[args.browser.name];
-                if (!pinnedVersion) {
-                    throw new Error(`No pinned version found for ${args.browser.name}`);
+            if (this.#pinnedBrowsers && !args.browser) {
+                // Use allSettled to avoid scenarios that
+                // a browser may fail early and leave the other
+                // installation in a faulty state
+                const result = await Promise.allSettled(Object.entries(this.#pinnedBrowsers).map(async ([browser, options]) => {
+                    if (options.skipDownload) {
+                        return;
+                    }
+                    await this.#install({
+                        ...argv,
+                        browser: {
+                            name: browser,
+                            buildId: options.buildId,
+                        },
+                    });
+                }));
+                for (const install of result) {
+                    if (install.status === 'rejected') {
+                        throw install.reason;
+                    }
                 }
-                args.browser.buildId = pinnedVersion;
             }
-            const originalBuildId = args.browser.buildId;
-            args.browser.buildId = await (0, browser_data_js_1.resolveBuildId)(args.browser.name, args.platform, args.browser.buildId);
-            await (0, install_js_1.install)({
-                browser: args.browser.name,
-                buildId: args.browser.buildId,
-                platform: args.platform,
-                cacheDir: args.path ?? this.#cachePath,
-                downloadProgressCallback: makeProgressCallback(args.browser.name, args.browser.buildId),
-                baseUrl: args.baseUrl,
-                buildIdAlias: originalBuildId !== args.browser.buildId
-                    ? originalBuildId
-                    : undefined,
-            });
-            console.log(`${args.browser.name}@${args.browser.buildId} ${(0, launch_js_1.computeExecutablePath)({
-                browser: args.browser.name,
-                buildId: args.browser.buildId,
-                cacheDir: args.path ?? this.#cachePath,
-                platform: args.platform,
-            })}`);
+            else {
+                await this.#install(args);
+            }
         })
             .command('launch <browser>', 'Launch the specified browser', yargs => {
             this.#defineBrowserParameter(yargs);
@@ -264879,6 +260414,39 @@ class CLI {
             : this.#pinnedBrowsers
                 ? 'pinned'
                 : 'latest';
+    }
+    async #install(args) {
+        args.platform ??= (0, detectPlatform_js_1.detectBrowserPlatform)();
+        if (!args.browser) {
+            throw new Error(`No browser arg proveded`);
+        }
+        if (!args.platform) {
+            throw new Error(`Could not resolve the current platform`);
+        }
+        if (args.browser.buildId === 'pinned') {
+            const options = this.#pinnedBrowsers?.[args.browser.name];
+            if (!options || !options.buildId) {
+                throw new Error(`No pinned version found for ${args.browser.name}`);
+            }
+            args.browser.buildId = options.buildId;
+        }
+        const originalBuildId = args.browser.buildId;
+        args.browser.buildId = await (0, browser_data_js_1.resolveBuildId)(args.browser.name, args.platform, args.browser.buildId);
+        await (0, install_js_1.install)({
+            browser: args.browser.name,
+            buildId: args.browser.buildId,
+            platform: args.platform,
+            cacheDir: args.path ?? this.#cachePath,
+            downloadProgressCallback: makeProgressCallback(args.browser.name, args.browser.buildId),
+            baseUrl: args.baseUrl,
+            buildIdAlias: originalBuildId !== args.browser.buildId ? originalBuildId : undefined,
+        });
+        console.log(`${args.browser.name}@${args.browser.buildId} ${(0, launch_js_1.computeExecutablePath)({
+            browser: args.browser.name,
+            buildId: args.browser.buildId,
+            cacheDir: args.path ?? this.#cachePath,
+            platform: args.platform,
+        })}`);
     }
 }
 exports.CLI = CLI;
@@ -266512,6 +262080,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.canDownload = exports.getInstalledBrowsers = exports.uninstall = exports.install = void 0;
 const assert_1 = __importDefault(__nccwpck_require__(42613));
+const child_process_1 = __nccwpck_require__(35317);
 const fs_1 = __nccwpck_require__(79896);
 const promises_1 = __nccwpck_require__(91943);
 const os_1 = __importDefault(__nccwpck_require__(70857));
@@ -266621,6 +262190,7 @@ async function installUrl(url, options) {
             if (!(0, fs_1.existsSync)(installedBrowser.executablePath)) {
                 throw new Error(`The browser folder (${outputPath}) exists but the executable (${installedBrowser.executablePath}) is missing`);
             }
+            await runSetup(installedBrowser);
             return installedBrowser;
         }
         debugInstall(`Downloading binary from ${url}`);
@@ -266645,11 +262215,36 @@ async function installUrl(url, options) {
             metadata.aliases[options.buildIdAlias] = options.buildId;
             installedBrowser.writeMetadata(metadata);
         }
+        await runSetup(installedBrowser);
         return installedBrowser;
     }
     finally {
         if ((0, fs_1.existsSync)(archivePath)) {
             await (0, promises_1.unlink)(archivePath);
+        }
+    }
+}
+async function runSetup(installedBrowser) {
+    // On Windows for Chrome invoke setup.exe to configure sandboxes.
+    if ((installedBrowser.platform === browser_data_js_1.BrowserPlatform.WIN32 ||
+        installedBrowser.platform === browser_data_js_1.BrowserPlatform.WIN64) &&
+        installedBrowser.browser === browser_data_js_1.Browser.CHROME &&
+        installedBrowser.platform === (0, detectPlatform_js_1.detectBrowserPlatform)()) {
+        try {
+            debugTime('permissions');
+            const browserDir = path_1.default.dirname(installedBrowser.executablePath);
+            const setupExePath = path_1.default.join(browserDir, 'setup.exe');
+            if (!(0, fs_1.existsSync)(setupExePath)) {
+                return;
+            }
+            (0, child_process_1.spawnSync)(path_1.default.join(browserDir, 'setup.exe'), [`--configure-browser-in-directory=` + browserDir], {
+                shell: true,
+            });
+            // TODO: Handle error here. Currently the setup.exe sometimes
+            // errors although it sets the permissions correctly.
+        }
+        finally {
+            debugTimeEnd('permissions');
         }
     }
 }
@@ -271254,7 +266849,7 @@ class HTTPRequest {
         await this.interception.handlers.reduce((promiseChain, interceptAction) => {
             return promiseChain.then(interceptAction);
         }, Promise.resolve());
-        this.interception.handlers = []; // TODO: verify this is correct top let gc run
+        this.interception.handlers = [];
         const { action } = this.interceptResolutionState();
         switch (action) {
             case 'abort':
@@ -272775,12 +268370,12 @@ let Page = (() => {
          */
         async waitForFrame(urlOrPredicate, options = {}) {
             const { timeout: ms = this.getDefaultTimeout(), signal } = options;
-            if ((0, util_js_1.isString)(urlOrPredicate)) {
-                urlOrPredicate = (frame) => {
+            const predicate = (0, util_js_1.isString)(urlOrPredicate)
+                ? (frame) => {
                     return urlOrPredicate === frame.url();
-                };
-            }
-            return await (0, rxjs_js_1.firstValueFrom)((0, rxjs_js_1.merge)((0, util_js_1.fromEmitterEvent)(this, "frameattached" /* PageEvent.FrameAttached */), (0, util_js_1.fromEmitterEvent)(this, "framenavigated" /* PageEvent.FrameNavigated */), (0, rxjs_js_1.from)(this.frames())).pipe((0, util_js_1.filterAsync)(urlOrPredicate), (0, rxjs_js_1.first)(), (0, rxjs_js_1.raceWith)((0, util_js_1.timeout)(ms), (0, util_js_1.fromAbortSignal)(signal), (0, util_js_1.fromEmitterEvent)(this, "close" /* PageEvent.Close */).pipe((0, rxjs_js_1.map)(() => {
+                }
+                : urlOrPredicate;
+            return await (0, rxjs_js_1.firstValueFrom)((0, rxjs_js_1.merge)((0, util_js_1.fromEmitterEvent)(this, "frameattached" /* PageEvent.FrameAttached */), (0, util_js_1.fromEmitterEvent)(this, "framenavigated" /* PageEvent.FrameNavigated */), (0, rxjs_js_1.from)(this.frames())).pipe((0, util_js_1.filterAsync)(predicate), (0, rxjs_js_1.first)(), (0, rxjs_js_1.raceWith)((0, util_js_1.timeout)(ms), (0, util_js_1.fromAbortSignal)(signal), (0, util_js_1.fromEmitterEvent)(this, "close" /* PageEvent.Close */).pipe((0, rxjs_js_1.map)(() => {
                 throw new Errors_js_1.TargetCloseError('Page closed.');
             })))));
         }
@@ -274805,12 +270400,14 @@ let BidiBrowser = (() => {
         #defaultViewport;
         #browserContexts = new WeakMap();
         #target = new Target_js_1.BidiBrowserTarget(this);
+        #cdpConnection;
         constructor(browserCore, opts) {
             super();
             this.#process = opts.process;
             this.#closeCallback = opts.closeCallback;
             this.#browserCore = browserCore;
             this.#defaultViewport = opts.defaultViewport;
+            this.#cdpConnection = opts.cdpConnection;
         }
         #initialize() {
             // Initializing existing contexts.
@@ -274833,7 +270430,10 @@ let BidiBrowser = (() => {
             return this.#browserCore.session.capabilities.browserVersion;
         }
         get cdpSupported() {
-            return !this.#browserName.toLocaleLowerCase().includes('firefox');
+            return this.#cdpConnection !== undefined;
+        }
+        get cdpConnection() {
+            return this.#cdpConnection;
         }
         async userAgent() {
             return this.#browserCore.session.capabilities.userAgent;
@@ -274984,10 +270584,11 @@ const util_js_1 = __nccwpck_require__(37165);
  */
 async function _connectToBiDiBrowser(connectionTransport, url, options) {
     const { ignoreHTTPSErrors = false, defaultViewport = util_js_1.DEFAULT_VIEWPORT } = options;
-    const { bidiConnection, closeCallback } = await getBiDiConnection(connectionTransport, url, options);
+    const { bidiConnection, cdpConnection, closeCallback } = await getBiDiConnection(connectionTransport, url, options);
     const BiDi = await Promise.resolve().then(() => __importStar(__nccwpck_require__(/* webpackIgnore: true */ 57034)));
     const bidiBrowser = await BiDi.BidiBrowser.create({
         connection: bidiConnection,
+        cdpConnection,
         closeCallback,
         process: undefined,
         defaultViewport: defaultViewport,
@@ -275038,6 +270639,7 @@ async function getBiDiConnection(connectionTransport, url, options) {
         acceptInsecureCerts: ignoreHTTPSErrors,
     });
     return {
+        cdpConnection,
         bidiConnection: bidiOverCdpConnection,
         closeCallback: async () => {
             // In case of BiDi over CDP, we need to close browser via CDP.
@@ -276274,22 +271876,6 @@ exports.ExposeableFunction = ExposeableFunction;
  * Copyright 2023 Google Inc.
  * SPDX-License-Identifier: Apache-2.0
  */
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
 var __runInitializers = (this && this.__runInitializers) || function (thisArg, initializers, value) {
     var useValue = arguments.length > 2;
     for (var i = 0; i < initializers.length; i++) {
@@ -276324,20 +271910,12 @@ var __esDecorate = (this && this.__esDecorate) || function (ctor, descriptorIn, 
     if (target) Object.defineProperty(target, contextIn.name, descriptor);
     done = true;
 };
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
 var __setFunctionName = (this && this.__setFunctionName) || function (f, name, prefix) {
     if (typeof name === "symbol") name = name.description ? "[".concat(name.description, "]") : "";
     return Object.defineProperty(f, "name", { configurable: true, value: prefix ? "".concat(prefix, " ", name) : name });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.BidiFrame = void 0;
-const Bidi = __importStar(__nccwpck_require__(57745));
 const rxjs_js_1 = __nccwpck_require__(43836);
 const Frame_js_1 = __nccwpck_require__(52821);
 const Accessibility_js_1 = __nccwpck_require__(82765);
@@ -276640,12 +272218,14 @@ let BidiFrame = (() => {
             ]);
         }
         async waitForNavigation(options = {}) {
-            const { timeout: ms = this.timeoutSettings.navigationTimeout() } = options;
+            const { timeout: ms = this.timeoutSettings.navigationTimeout(), signal } = options;
             const frames = this.childFrames().map(frame => {
                 return frame.#detached$();
             });
             return await (0, rxjs_js_1.firstValueFrom)((0, rxjs_js_1.combineLatest)([
-                (0, util_js_1.fromEmitterEvent)(this.browsingContext, 'navigation').pipe((0, rxjs_js_1.switchMap)(({ navigation }) => {
+                (0, util_js_1.fromEmitterEvent)(this.browsingContext, 'navigation')
+                    .pipe((0, rxjs_js_1.first)())
+                    .pipe((0, rxjs_js_1.switchMap)(({ navigation }) => {
                     return this.#waitForLoad$(options).pipe((0, rxjs_js_1.delayWhen)(() => {
                         if (frames.length === 0) {
                             return (0, rxjs_js_1.of)(undefined);
@@ -276685,7 +272265,7 @@ let BidiFrame = (() => {
                 const lastRequest = request.lastRedirect ?? request;
                 const httpRequest = HTTPRequest_js_1.requests.get(lastRequest);
                 return httpRequest.response();
-            }), (0, rxjs_js_1.raceWith)((0, util_js_1.timeout)(ms), this.#detached$().pipe((0, rxjs_js_1.map)(() => {
+            }), (0, rxjs_js_1.raceWith)((0, util_js_1.timeout)(ms), (0, util_js_1.fromAbortSignal)(signal), this.#detached$().pipe((0, rxjs_js_1.map)(() => {
                 throw new Errors_js_1.TargetCloseError('Frame detached.');
             })))));
         }
@@ -276712,12 +272292,11 @@ let BidiFrame = (() => {
             await exposedFunction[Symbol.asyncDispose]();
         }
         async createCDPSession() {
-            const { sessionId } = await this.client.send('Target.attachToTarget', {
-                targetId: this._id,
-                flatten: true,
-            });
-            await this.browsingContext.subscribe([Bidi.ChromiumBidi.BiDiModule.Cdp]);
-            return new CDPSession_js_1.BidiCdpSession(this, sessionId);
+            if (!this.page().browser().cdpSupported) {
+                throw new Errors_js_1.UnsupportedOperation();
+            }
+            const cdpConnection = this.page().browser().cdpConnection;
+            return await cdpConnection._createSession({ targetId: this._id });
         }
         get #waitForLoad$() { return _private_waitForLoad$_descriptor.value; }
         get #waitForNetworkIdle$() { return _private_waitForNetworkIdle$_descriptor.value; }
@@ -276995,6 +272574,9 @@ class BidiHTTPRequest extends HTTPRequest_js_1.HTTPRequest {
             });
         }
     };
+    timing() {
+        return this.#request.timing();
+    }
 }
 exports.BidiHTTPRequest = BidiHTTPRequest;
 _a = BidiHTTPRequest;
@@ -277125,8 +272707,7 @@ let BidiHTTPResponse = (() => {
         }
         headers() {
             const headers = {};
-            // TODO: Remove once the Firefox implementation is compliant with https://w3c.github.io/webdriver-bidi/#get-the-response-data.
-            for (const header of this.#data.headers || []) {
+            for (const header of this.#data.headers) {
                 // TODO: How to handle Binary Headers
                 // https://w3c.github.io/webdriver-bidi/#type-network-Header
                 if (header.value.type === 'string') {
@@ -277142,7 +272723,30 @@ let BidiHTTPResponse = (() => {
             return this.#data.fromCache;
         }
         timing() {
-            throw new Errors_js_1.UnsupportedOperation();
+            const bidiTiming = this.#request.timing();
+            return {
+                requestTime: bidiTiming.requestTime,
+                proxyStart: -1,
+                proxyEnd: -1,
+                dnsStart: bidiTiming.dnsStart,
+                dnsEnd: bidiTiming.dnsEnd,
+                connectStart: bidiTiming.connectStart,
+                connectEnd: bidiTiming.connectEnd,
+                sslStart: bidiTiming.tlsStart,
+                sslEnd: -1,
+                workerStart: -1,
+                workerReady: -1,
+                workerFetchStart: -1,
+                workerRespondWithSettled: -1,
+                workerRouterEvaluationStart: -1,
+                workerCacheLookupStart: -1,
+                sendStart: bidiTiming.requestStart,
+                sendEnd: -1,
+                pushStart: -1,
+                pushEnd: -1,
+                receiveHeadersStart: bidiTiming.responseStart,
+                receiveHeadersEnd: bidiTiming.responseEnd,
+            };
         }
         frame() {
             return this.#request.frame();
@@ -278796,11 +274400,17 @@ class BidiRealm extends Realm_js_1.Realm {
                 : `${functionDeclaration}\n${sourceUrlComment}\n`;
             responsePromise = this.realm.callFunction(functionDeclaration, 
             /* awaitPromise= */ true, {
-                arguments: args.length
+                // LazyArgs are used only internally and should not affect the order
+                // evaluate calls for the public APIs.
+                arguments: args.some(arg => {
+                    return arg instanceof LazyArg_js_1.LazyArg;
+                })
                     ? await Promise.all(args.map(arg => {
-                        return this.serialize(arg);
+                        return this.serializeAsync(arg);
                     }))
-                    : [],
+                    : args.map(arg => {
+                        return this.serialize(arg);
+                    }),
                 resultOwnership,
                 userActivation: true,
                 serializationOptions,
@@ -278821,10 +274431,13 @@ class BidiRealm extends Realm_js_1.Realm {
         }
         return JSHandle_js_1.BidiJSHandle.from(result, this);
     }
-    async serialize(arg) {
+    async serializeAsync(arg) {
         if (arg instanceof LazyArg_js_1.LazyArg) {
             arg = await arg.get(this);
         }
+        return this.serialize(arg);
+    }
+    serialize(arg) {
         if (arg instanceof JSHandle_js_1.BidiJSHandle || arg instanceof ElementHandle_js_1.BidiElementHandle) {
             if (arg.realm !== this) {
                 if (!(arg.realm instanceof BidiFrameRealm) ||
@@ -280739,6 +276352,7 @@ let Request = (() => {
                     return;
                 }
                 this.#response = event.response;
+                this.#event.request.timings = event.request.timings;
                 this.emit('success', this.#response);
                 // In case this is a redirect.
                 if (this.#response.status >= 300 && this.#response.status < 400) {
@@ -280850,6 +276464,9 @@ let Request = (() => {
         [(_dispose_decorators = [decorators_js_1.inertIfDisposed], disposable_js_1.disposeSymbol)]() {
             this.#disposables.dispose();
             super[disposable_js_1.disposeSymbol]();
+        }
+        timing() {
+            return this.#event.request.timings;
         }
     };
 })();
@@ -281140,7 +276757,10 @@ let UserContext = (() => {
         #initialize() {
             const browserEmitter = this.#disposables.use(new EventEmitter_js_1.EventEmitter(this.browser));
             browserEmitter.once('closed', ({ reason }) => {
-                this.dispose(`User context already closed: ${reason}`);
+                this.dispose(`User context was closed: ${reason}`);
+            });
+            browserEmitter.once('disconnected', ({ reason }) => {
+                this.dispose(`User context was closed: ${reason}`);
             });
             const sessionEmitter = this.#disposables.use(new EventEmitter_js_1.EventEmitter(this.#session));
             sessionEmitter.on('browsingContext.contextCreated', info => {
@@ -283719,7 +279339,7 @@ exports.DeviceRequestPromptDevice = DeviceRequestPromptDevice;
  * @example
  *
  * ```ts
- * const [deviceRequest] = Promise.all([
+ * const [devicePrompt] = Promise.all([
  *   page.waitForDevicePrompt(),
  *   page.click('#connect-bluetooth'),
  * ]);
@@ -284969,9 +280589,17 @@ class ExecutionContext extends EventEmitter_js_1.EventEmitter {
             callFunctionOnPromise = this.#client.send('Runtime.callFunctionOn', {
                 functionDeclaration: functionDeclarationWithSourceUrl,
                 executionContextId: this.#id,
-                arguments: args.length
-                    ? await Promise.all(args.map(convertArgument.bind(this)))
-                    : [],
+                // LazyArgs are used only internally and should not affect the order
+                // evaluate calls for the public APIs.
+                arguments: args.some(arg => {
+                    return arg instanceof LazyArg_js_1.LazyArg;
+                })
+                    ? await Promise.all(args.map(arg => {
+                        return convertArgumentAsync(this, arg);
+                    }))
+                    : args.map(arg => {
+                        return convertArgument(this, arg);
+                    }),
                 returnByValue,
                 awaitPromise: true,
                 userGesture: true,
@@ -284991,10 +280619,13 @@ class ExecutionContext extends EventEmitter_js_1.EventEmitter {
         return returnByValue
             ? (0, utils_js_1.valueFromRemoteObject)(remoteObject)
             : this.#world.createCdpHandle(remoteObject);
-        async function convertArgument(arg) {
+        async function convertArgumentAsync(context, arg) {
             if (arg instanceof LazyArg_js_1.LazyArg) {
-                arg = await arg.get(this);
+                arg = await arg.get(context);
             }
+            return convertArgument(context, arg);
+        }
+        function convertArgument(context, arg) {
             if (typeof arg === 'bigint') {
                 // eslint-disable-line valid-typeof
                 return { unserializableValue: `${arg.toString()}n` };
@@ -285015,7 +280646,7 @@ class ExecutionContext extends EventEmitter_js_1.EventEmitter {
                 ? arg
                 : null;
             if (objectHandle) {
-                if (objectHandle.realm !== this.#world) {
+                if (objectHandle.realm !== context.#world) {
                     throw new Error('JSHandles can be evaluated only in the context they were created!');
                 }
                 if (objectHandle.disposed) {
@@ -285592,8 +281223,8 @@ let CdpFrame = (() => {
             }
         }
         async waitForNavigation(options = {}) {
-            const { waitUntil = ['load'], timeout = this._frameManager.timeoutSettings.navigationTimeout(), } = options;
-            const watcher = new LifecycleWatcher_js_1.LifecycleWatcher(this._frameManager.networkManager, this, waitUntil, timeout);
+            const { waitUntil = ['load'], timeout = this._frameManager.timeoutSettings.navigationTimeout(), signal, } = options;
+            const watcher = new LifecycleWatcher_js_1.LifecycleWatcher(this._frameManager.networkManager, this, waitUntil, timeout, signal);
             const error = await Deferred_js_1.Deferred.race([
                 watcher.terminationPromise(),
                 ...(options.ignoreSameDocumentNavigation
@@ -287495,7 +283126,7 @@ class LifecycleWatcher {
     #hasSameDocumentNavigation;
     #swapped;
     #navigationResponseReceived;
-    constructor(networkManager, frame, waitUntil, timeout) {
+    constructor(networkManager, frame, waitUntil, timeout, signal) {
         if (Array.isArray(waitUntil)) {
             waitUntil = waitUntil.slice();
         }
@@ -287507,6 +283138,9 @@ class LifecycleWatcher {
             const protocolEvent = puppeteerToProtocolLifecycle.get(value);
             (0, assert_js_1.assert)(protocolEvent, 'Unknown value for options.waitUntil: ' + value);
             return protocolEvent;
+        });
+        signal?.addEventListener('abort', () => {
+            this.#terminationDeferred.reject(signal.reason);
         });
         this.#frame = frame;
         this.#timeout = timeout;
@@ -287610,10 +283244,6 @@ class LifecycleWatcher {
                     return false;
                 }
             }
-            // TODO(#1): Its possible we don't need this check
-            // CDP provided the correct order for Loading Events
-            // And NetworkIdle is a global state
-            // Consider removing
             for (const child of frame.childFrames()) {
                 if (child._hasStartedLoading &&
                     !checkLifecycle(child, expectedLifecycle)) {
@@ -288333,6 +283963,7 @@ const CDPSession_js_1 = __nccwpck_require__(77409);
 const Page_js_1 = __nccwpck_require__(69029);
 const ConsoleMessage_js_1 = __nccwpck_require__(60801);
 const Errors_js_1 = __nccwpck_require__(41938);
+const EventEmitter_js_1 = __nccwpck_require__(43951);
 const FileChooser_js_1 = __nccwpck_require__(54258);
 const NetworkManagerEvents_js_1 = __nccwpck_require__(69161);
 const util_js_1 = __nccwpck_require__(37165);
@@ -288406,84 +284037,6 @@ class CdpPage extends Page_js_1.Page {
     #sessionCloseDeferred = Deferred_js_1.Deferred.create();
     #serviceWorkerBypassed = false;
     #userDragInterceptionEnabled = false;
-    #frameManagerHandlers = [
-        [
-            FrameManagerEvents_js_1.FrameManagerEvent.FrameAttached,
-            (frame) => {
-                this.emit("frameattached" /* PageEvent.FrameAttached */, frame);
-            },
-        ],
-        [
-            FrameManagerEvents_js_1.FrameManagerEvent.FrameDetached,
-            (frame) => {
-                this.emit("framedetached" /* PageEvent.FrameDetached */, frame);
-            },
-        ],
-        [
-            FrameManagerEvents_js_1.FrameManagerEvent.FrameNavigated,
-            (frame) => {
-                this.emit("framenavigated" /* PageEvent.FrameNavigated */, frame);
-            },
-        ],
-    ];
-    #networkManagerHandlers = [
-        [
-            NetworkManagerEvents_js_1.NetworkManagerEvent.Request,
-            (request) => {
-                this.emit("request" /* PageEvent.Request */, request);
-            },
-        ],
-        [
-            NetworkManagerEvents_js_1.NetworkManagerEvent.RequestServedFromCache,
-            (request) => {
-                this.emit("requestservedfromcache" /* PageEvent.RequestServedFromCache */, request);
-            },
-        ],
-        [
-            NetworkManagerEvents_js_1.NetworkManagerEvent.Response,
-            (response) => {
-                this.emit("response" /* PageEvent.Response */, response);
-            },
-        ],
-        [
-            NetworkManagerEvents_js_1.NetworkManagerEvent.RequestFailed,
-            (request) => {
-                this.emit("requestfailed" /* PageEvent.RequestFailed */, request);
-            },
-        ],
-        [
-            NetworkManagerEvents_js_1.NetworkManagerEvent.RequestFinished,
-            (request) => {
-                this.emit("requestfinished" /* PageEvent.RequestFinished */, request);
-            },
-        ],
-    ];
-    #sessionHandlers = [
-        [
-            CDPSession_js_1.CDPSessionEvent.Disconnected,
-            () => {
-                this.#sessionCloseDeferred.reject(new Errors_js_1.TargetCloseError('Target closed'));
-            },
-        ],
-        [
-            'Page.domContentEventFired',
-            () => {
-                return this.emit("domcontentloaded" /* PageEvent.DOMContentLoaded */, undefined);
-            },
-        ],
-        [
-            'Page.loadEventFired',
-            () => {
-                return this.emit("load" /* PageEvent.Load */, undefined);
-            },
-        ],
-        ['Page.javascriptDialogOpening', this.#onDialog.bind(this)],
-        ['Runtime.exceptionThrown', this.#handleException.bind(this)],
-        ['Inspector.targetCrashed', this.#onTargetCrashed.bind(this)],
-        ['Performance.metrics', this.#emitMetrics.bind(this)],
-        ['Log.entryAdded', this.#onLogEntryAdded.bind(this)],
-        ['Page.fileChooserOpened', this.#onFileChooser.bind(this)],
-    ];
     constructor(client, target) {
         super();
         this.#primaryTargetClient = client;
@@ -288501,19 +284054,38 @@ class CdpPage extends Page_js_1.Page {
         this.#tracing = new Tracing_js_1.Tracing(client);
         this.#coverage = new Coverage_js_1.Coverage(client);
         this.#viewport = null;
-        for (const [eventName, handler] of this.#frameManagerHandlers) {
-            this.#frameManager.on(eventName, handler);
-        }
-        this.#frameManager.on(FrameManagerEvents_js_1.FrameManagerEvent.ConsoleApiCalled, ([world, event]) => {
+        const frameManagerEmitter = new EventEmitter_js_1.EventEmitter(this.#frameManager);
+        frameManagerEmitter.on(FrameManagerEvents_js_1.FrameManagerEvent.FrameAttached, frame => {
+            this.emit("frameattached" /* PageEvent.FrameAttached */, frame);
+        });
+        frameManagerEmitter.on(FrameManagerEvents_js_1.FrameManagerEvent.FrameDetached, frame => {
+            this.emit("framedetached" /* PageEvent.FrameDetached */, frame);
+        });
+        frameManagerEmitter.on(FrameManagerEvents_js_1.FrameManagerEvent.FrameNavigated, frame => {
+            this.emit("framenavigated" /* PageEvent.FrameNavigated */, frame);
+        });
+        frameManagerEmitter.on(FrameManagerEvents_js_1.FrameManagerEvent.ConsoleApiCalled, ([world, event]) => {
             this.#onConsoleAPI(world, event);
         });
-        this.#frameManager.on(FrameManagerEvents_js_1.FrameManagerEvent.BindingCalled, ([world, event]) => {
+        frameManagerEmitter.on(FrameManagerEvents_js_1.FrameManagerEvent.BindingCalled, ([world, event]) => {
             void this.#onBindingCalled(world, event);
         });
-        for (const [eventName, handler] of this.#networkManagerHandlers) {
-            // TODO: Remove any.
-            this.#frameManager.networkManager.on(eventName, handler);
-        }
+        const networkManagerEmitter = new EventEmitter_js_1.EventEmitter(this.#frameManager.networkManager);
+        networkManagerEmitter.on(NetworkManagerEvents_js_1.NetworkManagerEvent.Request, request => {
+            this.emit("request" /* PageEvent.Request */, request);
+        });
+        networkManagerEmitter.on(NetworkManagerEvents_js_1.NetworkManagerEvent.RequestServedFromCache, request => {
+            this.emit("requestservedfromcache" /* PageEvent.RequestServedFromCache */, request);
+        });
+        networkManagerEmitter.on(NetworkManagerEvents_js_1.NetworkManagerEvent.Response, response => {
+            this.emit("response" /* PageEvent.Response */, response);
+        });
+        networkManagerEmitter.on(NetworkManagerEvents_js_1.NetworkManagerEvent.RequestFailed, request => {
+            this.emit("requestfailed" /* PageEvent.RequestFailed */, request);
+        });
+        networkManagerEmitter.on(NetworkManagerEvents_js_1.NetworkManagerEvent.RequestFinished, request => {
+            this.emit("requestfinished" /* PageEvent.RequestFinished */, request);
+        });
         this.#tabTargetClient.on(CDPSession_js_1.CDPSessionEvent.Swapped, this.#onActivation.bind(this));
         this.#tabTargetClient.on(CDPSession_js_1.CDPSessionEvent.Ready, this.#onSecondaryTarget.bind(this));
         this.#targetManager.on("targetGone" /* TargetManagerEvent.TargetGone */, this.#onDetachedFromTarget);
@@ -288575,11 +284147,23 @@ class CdpPage extends Page_js_1.Page {
      * during a navigation to a prerended page.
      */
     #setupPrimaryTargetListeners() {
-        this.#primaryTargetClient.on(CDPSession_js_1.CDPSessionEvent.Ready, this.#onAttachedToTarget);
-        for (const [eventName, handler] of this.#sessionHandlers) {
-            // TODO: Remove any.
-            this.#primaryTargetClient.on(eventName, handler);
-        }
+        const clientEmitter = new EventEmitter_js_1.EventEmitter(this.#primaryTargetClient);
+        clientEmitter.on(CDPSession_js_1.CDPSessionEvent.Ready, this.#onAttachedToTarget);
+        clientEmitter.on(CDPSession_js_1.CDPSessionEvent.Disconnected, () => {
+            this.#sessionCloseDeferred.reject(new Errors_js_1.TargetCloseError('Target closed'));
+        });
+        clientEmitter.on('Page.domContentEventFired', () => {
+            this.emit("domcontentloaded" /* PageEvent.DOMContentLoaded */, undefined);
+        });
+        clientEmitter.on('Page.loadEventFired', () => {
+            this.emit("load" /* PageEvent.Load */, undefined);
+        });
+        clientEmitter.on('Page.javascriptDialogOpening', this.#onDialog.bind(this));
+        clientEmitter.on('Runtime.exceptionThrown', this.#handleException.bind(this));
+        clientEmitter.on('Inspector.targetCrashed', this.#onTargetCrashed.bind(this));
+        clientEmitter.on('Performance.metrics', this.#emitMetrics.bind(this));
+        clientEmitter.on('Log.entryAdded', this.#onLogEntryAdded.bind(this));
+        clientEmitter.on('Page.fileChooserOpened', this.#onFileChooser.bind(this));
     }
     #onDetachedFromTarget = (target) => {
         const sessionId = target._session()?.id();
@@ -288775,7 +284359,16 @@ class CdpPage extends Page_js_1.Page {
             }
             return cookie;
         };
-        return originalCookies.map(filterUnsupportedAttributes);
+        return originalCookies.map(filterUnsupportedAttributes).map(cookie => {
+            return {
+                ...cookie,
+                // TODO: a breaking change is needed in Puppeteer types to support other
+                // partition keys.
+                partitionKey: cookie.partitionKey
+                    ? cookie.partitionKey.topLevelSite
+                    : undefined,
+            };
+        });
     }
     async deleteCookie(...cookies) {
         const pageURL = this.url();
@@ -288802,7 +284395,19 @@ class CdpPage extends Page_js_1.Page {
         await this.deleteCookie(...items);
         if (items.length) {
             await this.#primaryTargetClient.send('Network.setCookies', {
-                cookies: items,
+                cookies: items.map(cookieParam => {
+                    return {
+                        ...cookieParam,
+                        partitionKey: cookieParam.partitionKey
+                            ? {
+                                // TODO: a breaking change neeeded to change the partition key
+                                // type in Puppeteer.
+                                topLevelSite: cookieParam.partitionKey,
+                                hasCrossSiteAncestor: false,
+                            }
+                            : undefined,
+                    };
+                }),
             });
         }
     }
@@ -292536,7 +288141,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.EventSubscription = exports.EventEmitter = void 0;
+exports.EventEmitter = void 0;
 const mitt_js_1 = __importDefault(__nccwpck_require__(35182));
 const disposable_js_1 = __nccwpck_require__(32608);
 /**
@@ -292660,24 +288265,6 @@ class EventEmitter {
     }
 }
 exports.EventEmitter = EventEmitter;
-/**
- * @internal
- */
-class EventSubscription {
-    #target;
-    #type;
-    #handler;
-    constructor(target, type, handler) {
-        this.#target = target;
-        this.#type = type;
-        this.#handler = handler;
-        this.#target.on(this.#type, this.#handler);
-    }
-    [disposable_js_1.disposeSymbol]() {
-        this.#target.off(this.#type, this.#handler);
-    }
-}
-exports.EventSubscription = EventSubscription;
 //# sourceMappingURL=EventEmitter.js.map
 
 /***/ }),
@@ -295101,7 +290688,7 @@ exports.packageVersion = void 0;
 /**
  * @internal
  */
-exports.packageVersion = '22.13.1';
+exports.packageVersion = '22.15.0';
 //# sourceMappingURL=version.js.map
 
 /***/ }),
@@ -295546,7 +291133,7 @@ class FirefoxLauncher extends ProductLauncher_js_1.ProductLauncher {
         if (profileArgIndex !== -1) {
             userDataDir = firefoxArguments[profileArgIndex + 1];
             if (!userDataDir) {
-                throw new Error(`Firefox profile not found at '${userDataDir}'`);
+                throw new Error(`Missing value for profile command line argument`);
             }
             // When using a custom Firefox profile it needs to be populated
             // with required preferences.
@@ -295622,7 +291209,7 @@ class FirefoxLauncher extends ProductLauncher_js_1.ProductLauncher {
     }
     defaultArgs(options = {}) {
         const { devtools = false, headless = !devtools, args = [], userDataDir = null, } = options;
-        const firefoxArguments = ['--no-remote'];
+        const firefoxArguments = [];
         switch (os_1.default.platform()) {
             case 'darwin':
                 firefoxArguments.push('--foreground');
@@ -295763,16 +291350,24 @@ class PipeTransport {
     onmessage;
     constructor(pipeWrite, pipeRead) {
         this.#pipeWrite = pipeWrite;
-        this.#subscriptions.use(new EventEmitter_js_1.EventSubscription(pipeRead, 'data', (buffer) => {
+        const pipeReadEmitter = this.#subscriptions.use(
+        // NodeJS event emitters don't support `*` so we need to typecast
+        // As long as we don't use it we should be OK.
+        new EventEmitter_js_1.EventEmitter(pipeRead));
+        pipeReadEmitter.on('data', (buffer) => {
             return this.#dispatch(buffer);
-        }));
-        this.#subscriptions.use(new EventEmitter_js_1.EventSubscription(pipeRead, 'close', () => {
+        });
+        pipeReadEmitter.on('close', () => {
             if (this.onclose) {
                 this.onclose.call(null);
             }
-        }));
-        this.#subscriptions.use(new EventEmitter_js_1.EventSubscription(pipeRead, 'error', util_js_1.debugError));
-        this.#subscriptions.use(new EventEmitter_js_1.EventSubscription(pipeWrite, 'error', util_js_1.debugError));
+        });
+        pipeReadEmitter.on('error', util_js_1.debugError);
+        const pipeWriteEmitter = this.#subscriptions.use(
+        // NodeJS event emitters don't support `*` so we need to typecast
+        // As long as we don't use it we should be OK.
+        new EventEmitter_js_1.EventEmitter(pipeRead));
+        pipeWriteEmitter.on('error', util_js_1.debugError);
     }
     send(message) {
         (0, assert_js_1.assert)(!this.#isClosed, '`PipeTransport` is closed.');
@@ -296042,6 +291637,7 @@ class ProductLauncher {
         });
         return await BiDi.BidiBrowser.create({
             connection: bidiConnection,
+            cdpConnection: connection,
             closeCallback,
             process: browserProcess.nodeProcess,
             defaultViewport: opts.defaultViewport,
@@ -296785,8 +292381,8 @@ exports.PUPPETEER_REVISIONS = void 0;
  * @internal
  */
 exports.PUPPETEER_REVISIONS = Object.freeze({
-    chrome: '126.0.6478.182',
-    'chrome-headless-shell': '126.0.6478.182',
+    chrome: '127.0.6533.88',
+    'chrome-headless-shell': '127.0.6533.88',
     firefox: 'latest',
 });
 //# sourceMappingURL=revisions.js.map
