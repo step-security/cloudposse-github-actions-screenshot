@@ -1,0 +1,39 @@
+name: Test
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: The fully-formed ref of the branch or tag that triggered the workflow run
+        required: false
+        type: string
+      sha:
+        description: The sha of the commit that triggered the workflow run
+        required: false
+        type: string
+jobs:
+  screenshot:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run this composite action
+        id: screenshot
+        uses: ./ # Use the path to your action directory
+        with:
+          # Your action's inputs
+          url: "file://${{github.workspace}}/test/html/index.html"
+          output: "docs/example.png"
+          css: |
+            body {
+              background: rgb(2,0,36);
+              background: linear-gradient(139deg, rgba(2,0,36,1) 0%, rgba(9,9,121,1) 56%, rgba(147,0,255,1) 100%);
+            }
+          customizations: "\"#name\": \"${{ github.event.repository.name }} \U0001F4F7\"\n"
+          viewportWidth: 2000
+          viewportHeight: 800

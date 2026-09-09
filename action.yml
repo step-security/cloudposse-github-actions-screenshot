@@ -1,0 +1,175 @@
+name: 'Example composite GitHub action'
+description: "Generate a browser screenshot using puppeteer of any URL, including local files. Supports custom CSS overrides and Jquery style rewrites of content."
+author: 'step-security'
+branding:
+  icon: 'camera'
+  color: 'white'
+inputs:
+  url:
+    description: 'URL of the HTML content to convert to an image. Use file:// for local files'
+    required: true
+  css:
+    description: 'Custom CSS overrides'
+    required: false
+  customizations:
+    description: 'String representation of a YAML or JSON map of CSS paths (key) and replacement (value)'
+    required: false
+  output:
+    description: 'Output image file path'
+    required: false
+    default: 'screenshot.png'
+  outputType:
+    description: 'Output image type'
+    default: 'png'
+  omitBackground:
+    description: 'Omit the browser default background. Enable to support transparency.'
+    default: 'true'
+  viewportWidth:
+    description: 'Viewport width in pixels'
+    required: true
+  viewportHeight:
+    description: 'Viewport height in pixels'
+    required: true
+  imageQuality:
+    description: 'Quality of the output image (1-100, applicable for JPEG)'
+    required: false
+  consoleOutputEnabled:
+    description: 'Whether or not to output the browser console log'
+    default: 'true'
+  deviceScaleFactor:
+    description: 'Specifies the device scale factor (pixel ratio) for the web page rendering. It determines how many physical pixels are used to represent a single logical pixel. For example, a device scale factor of 2 means one logical pixel is represented by two physical pixels, commonly used for high-DPI (Retina) displays. A value of 1 uses standard pixel density. This factor affects the resolution and quality of the rendered page or screenshot.'
+    default: '2'
+    required: false
+  fullPage:
+    description: 'Screen capture the entire page by scrolling down'
+    default: 'false'
+  waitForTimeout:
+    description: 'Number of milliseconds to delay before taking screenshot'
+    default: '500'
+  puppeteerImage:
+    description: 'Docker image to run puppeteer. See https://github.com/puppeteer/puppeteer/pkgs/container/puppeteer'
+    default: 'ghcr.io/puppeteer/puppeteer:22.13.1'
+outputs:
+  file:
+    description: "File containing the generated screenshot"
+    value: "${{ steps.context.outputs.file }}"
+runs:
+  using: "composite"
+  steps:
+
+    - name: Subscription check
+      env:
+        REPO_PRIVATE: ${{ github.event.repository.private }}
+      run: |
+        # validate subscription status
+        UPSTREAM="cloudposse-github-actions/screenshot"
+        ACTION_REPO="${GITHUB_ACTION_REPOSITORY:-}"
+        DOCS_URL="https://docs.stepsecurity.io/actions/stepsecurity-maintained-actions"
+
+        echo ""
+        echo -e "\033[1;36mStepSecurity Maintained Action\033[0m"
+        echo "Secure drop-in replacement for $UPSTREAM"
+        if [ "$REPO_PRIVATE" = "false" ]; then
+          echo -e "\033[32m✓ Free for public repositories\033[0m"
+        fi
+        echo -e "\033[36mLearn more:\033[0m $DOCS_URL"
+        echo ""
+
+        if [ "$REPO_PRIVATE" != "false" ]; then
+          SERVER_URL="${GITHUB_SERVER_URL:-https://github.com}"
+
+          if [ "$SERVER_URL" != "https://github.com" ]; then
+            BODY=$(printf '{"action":"%s","ghes_server":"%s"}' "$ACTION_REPO" "$SERVER_URL")
+          else
+            BODY=$(printf '{"action":"%s"}' "$ACTION_REPO")
+          fi
+
+          API_URL="https://agent.api.stepsecurity.io/v1/github/$GITHUB_REPOSITORY/actions/maintained-actions-subscription"
+
+          RESPONSE=$(curl --max-time 3 -s -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -d "$BODY" \
+            "$API_URL" -o /dev/null) && CURL_EXIT_CODE=0 || CURL_EXIT_CODE=$?
+
+          if [ $CURL_EXIT_CODE -ne 0 ]; then
+            echo "Timeout or API not reachable. Continuing to next step."
+          elif [ "$RESPONSE" = "403" ]; then
+            echo -e "::error::\033[1;31mThis action requires a StepSecurity subscription for private repositories.\033[0m"
+            echo -e "::error::\033[31mLearn how to enable a subscription: $DOCS_URL\033[0m"
+            exit 1
+          fi
+        fi
+      shell: bash
+
+    - name: Setup environment
+      shell: bash
+      env:
+        INPUT_CSS: ${{ inputs.css }}
+        INPUT_CUSTOMIZATIONS: ${{ inputs.customizations }}
+        INPUT_OUTPUT: ${{ inputs.output }}
+      run: |
+        # Ensure node_modules folder will have correct permissions
+        mkdir -p '${{ github.action_path }}/node_modules'
+
+        # Validate output path to prevent directory traversal
+        if [[ "$INPUT_OUTPUT" == *".."* ]]; then
+          echo "::error::Invalid output path: path traversal sequences are not allowed"
+          exit 1
+        fi
+
+        # Ensure parent directory containing output file exists
+        mkdir -p "$(dirname "${{ github.workspace }}/$INPUT_OUTPUT")"
+
+        # Ensure docker container can write this workspace as an unprivileged user
+        chmod ugoa+rw -R '${{ github.workspace }}' '${{ github.action_path }}'
+
+        # Write out customizations via env vars to avoid heredoc injection
+        printf '%s' "$INPUT_CSS" > '${{ github.action_path }}/custom.css'
+        printf '%s' "$INPUT_CUSTOMIZATIONS" > '${{ github.action_path }}/custom.yaml'
+
+        # Prepare inputs that should be passed to the docker container.
+        cat <<'__EOF__' >docker.env
+        LANG=C.UTF-8
+        GITHUB_WORKSPACE=${{ github.workspace }}
+        ACTION_PATH=${{ github.action_path }}
+        INPUT_OUTPUT_TYPE=${{ inputs.outputType }}
+        INPUT_URL=${{ inputs.url }}
+        INPUT_OUTPUT=${{ github.workspace }}/$INPUT_OUTPUT
+        INPUT_OUTPUT_TYPE=${{ inputs.outputType }}
+        INPUT_OMIT_BACKGROUND=${{ inputs.omitBackground }}
+        INPUT_VIEWPORT_WIDTH=${{ inputs.viewportWidth }}
+        INPUT_VIEWPORT_HEIGHT=${{ inputs.viewportHeight }}
+        INPUT_IMAGE_QUALITY=${{ inputs.imageQuality }}
+        INPUT_CONSOLE_OUTPUT_ENABLED=${{ inputs.consoleOutputEnabled }}
+        INPUT_DEVICE_SCALE_FACTOR=${{ inputs.deviceScaleFactor }}
+        INPUT_FULL_PAGE=${{ inputs.fullPage }}
+        INPUT_WAIT_FOR_TIMEOUT=${{ inputs.waitForTimeout }}
+        __EOF__
+        cat docker.env
+
+        # Avoid duplicate mount points
+        if [ "$(realpath "${{ github.workspace }}")" == "$(realpath "${{ github.action_path }}")" ]; then
+          echo "DOCKER_VOLUMES=-v "${{ github.workspace }}":"${{ github.workspace }}":rw" >> "$GITHUB_ENV"
+        else
+          echo "DOCKER_VOLUMES=-v "${{ github.workspace }}":"${{ github.workspace }}":rw -v "${{ github.action_path }}":"${{ github.action_path }}":rw" >> "$GITHUB_ENV" 
+        fi
+
+    - name: Run puppeteer to take screenshot
+      id: screenshot
+      uses: tj-actions/docker-run@1d25a677da8f1243a138dc5db21e307e92986ffe # v2.2.1
+      with:
+        image: "${{ inputs.puppeteerImage }}"
+        name: puppeteer-chrome
+        # No quotes around ${{ env.DOCKER_VOLUMES }} because it is a list of arguments
+        options: '-i --init --cap-add=SYS_ADMIN ${{ env.DOCKER_VOLUMES }} --workdir="${{github.action_path}}" --env-file docker.env'
+        args: |
+          bash -c './entrypoint.sh'
+
+    - id: context
+      shell: bash
+      env:
+        INPUT_OUTPUT: ${{ inputs.output }}
+      run: |
+          printf 'file=%s\n' "$INPUT_OUTPUT" >> $GITHUB_OUTPUT
+
